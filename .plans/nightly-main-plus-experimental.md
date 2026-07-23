@@ -1,6 +1,6 @@
 # Nightly Main Plus Experimental Integration
 
-Status: IN_PROGRESS
+Status: READY_FOR_PUBLICATION
 
 Last updated: 2026-07-23
 
@@ -22,20 +22,21 @@ upstream work before it reaches `pingdotgg/t3code:main`.
 
 | Source | Integrated ref | Last checked | State |
 | --- | --- | --- | --- |
-| `origin/main` | `2d31cb022dee43e5a729273a6936228f30077e29` | 2026-07-23 | Merge in progress |
-| PR #2829 | `f30673fea7df138fc210fbab4288fb03aaa96142` | 2026-07-23 | Draft, conflicting upstream; merged manually |
-| PR #3558 | `21bf9696b29117c90e18f05bd8043c8fed5d9c9c` | 2026-07-23 | Closed without merge; V2 reimplementation in progress |
-| PR #3638 | merge commit `dac514e6b6237c07e9ab3c5415e97472a96926b2` | 2026-07-23 | Merged into the PR #2829 base, not upstream `main` |
-| Issue #3164 | open | 2026-07-23 | Cron/prompt MVP covered by PR #3638; external event triggers remain upstream scope |
+| `origin/main` | `b44ed835c63caafae619e303ca019a251c2698b2` | 2026-07-23 | Integrated by `67541df53` |
+| Integration branch | `4e03d417b` | 2026-07-23 | Requested feature implementation complete |
+| PR #2829 | `f30673fea7df138fc210fbab4288fb03aaa96142` | 2026-07-23 | Draft, conflicting upstream; integrated by `c056279e2` |
+| PR #3558 | `21bf9696b29117c90e18f05bd8043c8fed5d9c9c` | 2026-07-23 | Closed without merge; V2-native replacement integrated |
+| PR #3638 | merge commit `dac514e6b6237c07e9ab3c5415e97472a96926b2` | 2026-07-23 | Integrated through PR #2829; not present on upstream `main` |
+| Issue #3164 | open | 2026-07-23 | Cron/prompt MVP integrated; external event triggers remain upstream scope |
 
-The final integration-branch commit and build evidence must replace the `Merge in progress` marker
-before this plan is marked `DONE` for the first publication.
+The implementation and first-publication verification are complete. The only remaining gate is
+publishing and verifying `fork/nightly/main-plus-experimental`.
 
 ## Feature ledger
 
 ### PR #2829 - Orchestrator V2
 
-- Status: IN_PROGRESS
+- Status: DONE
 - Strategy: merge the complete upstream feature head, then preserve newer `main` behavior through
   focused V2 ports
 - Reason for the full integration: the requested scheduler from PR #3638 is implemented against
@@ -55,7 +56,7 @@ before this plan is marked `DONE` for the first publication.
 
 ### PR #3558 - Codex `/review` and `/compact`
 
-- Status: IN_PROGRESS
+- Status: DONE
 - Strategy: reimplement on `CodexAdapterV2`; do not cherry-pick deleted V1 adapter files.
 - Required behavior:
   - advertise `/review` and `/compact` only after a successful Codex app-server probe
@@ -65,12 +66,14 @@ before this plan is marked `DONE` for the first publication.
   - preserve normal orchestration run lifecycle and failure handling
 - Update watchlist: app-server protocol generation pin, command RPC schemas, Codex provider snapshot,
   adapter session multiplexing, and compact notification timeout/cleanup behavior.
+- Local implementation: `8919694ea`; `/compact` has a 30-second `turn/started` timeout and always
+  clears pending correlation state on success, timeout, or RPC failure.
 - Retirement: remove the local port only when upstream `main` has equivalent V2 command routing and
   focused tests.
 
 ### Native Codex `/goal`
 
-- Status: IN_PROGRESS
+- Status: DONE
 - Strategy: local V2-native implementation using `thread/goal/get|set|clear`; never send `/goal` as
   ordinary prompt text.
 - Required behavior:
@@ -82,12 +85,22 @@ before this plan is marked `DONE` for the first publication.
   - provider notifications update the durable V2 projection
 - Update watchlist: Codex goals feature flag, native-thread-to-app-thread routing, provider session
   reuse, projection replay, and draft threads without a materialized native Codex thread.
+- Local implementation:
+  - `8919694ea`: canonical goal schema, durable projection/replay, stale-event tombstone, and
+    migration 42
+  - `95dafb0e0`: Codex goal RPC adapter, provider notifications, and centralized persistence
+  - `617e948be`: serialized, idempotent no-run thread goal service
+  - `6bd14fd4c`: WebSocket RPC and client-runtime operations
+  - `4e03d417b`: Web command parser, dialog, header badge, and thread-details controls
+- Client scope: `/goal` is a Web built-in for materialized Codex threads. It is deliberately not
+  advertised as a provider-wide command, so Mobile cannot accidentally send `/goal` as ordinary
+  prompt text. A native Mobile goal UI is a separate future update.
 - Retirement: adopt an upstream native goal implementation only after verifying that it does not
   regress persisted display or no-run command semantics.
 
 ### Issue #3164 / PR #3638 - Scheduled prompts
 
-- Status: IN_PROGRESS
+- Status: DONE
 - Strategy: retain the complete scheduled-task implementation already merged into PR #2829.
 - Included behavior: project-scoped prompt, interval or fixed local-server time with weekday mask,
   model/runtime/workspace selection, persistence, enable/pause, run-now, live status, MCP tools, new
@@ -114,8 +127,8 @@ before this plan is marked `DONE` for the first publication.
 
 1. Main migration 33 (`ProjectionThreadsSettled`) remains immutable. The PR #2829 migrations that
    originally used IDs 33 through 40 are registered as 34 through 41. Their upstream filenames remain
-   unchanged to keep future feature-head merges reviewable; `Migrations.ts` is the authoritative ID
-   mapping.
+   unchanged to keep future feature-head merges reviewable. Local goal migration file 41 is
+   registered as database migration 42. `Migrations.ts` is the authoritative ID mapping.
 2. Deleted V1 orchestration adapters, reducers, and large V1 test seams stay deleted. Newer `main`
    behavior is ported to V2 instead of reviving two runtimes.
 3. PR #4026 thread settlement is a required main-compatibility invariant. Thread settle/unsettle,
@@ -211,9 +224,85 @@ The first publication establishes a buildable branch, not a production release c
 - Conflicts: mobile, deleted V1 server seams, V1 snapshot compatibility, migrations, web
   ChatView/Sidebar/composer, and client-runtime V1-to-V2 state.
 - Key decisions: full V2 retained because scheduled tasks depend on it; migration IDs shifted to
-  34-41; current `main` settlement is being ported to V2; slash commands and goals are being
+  34-41; current `main` settlement was ported to V2; slash commands and goals are being
   reimplemented rather than cherry-picked.
-- Verification: IN_PROGRESS. Replace this line with exact commands and results before first push.
+- Baseline merge commit: `c056279e2d1f7584ef1fe91d124a67d61f7cb2fe`.
+- Verification completed for this merge:
+  - contracts, client-runtime, server, web, and mobile affected-package typechecks
+  - repo lint with `--deny-warnings`
+  - 20 ACP process-tree tests, 54 ACP/XAi/MCP tests, 195 V2 settlement tests, 169 server lifecycle
+    tests, 204 mobile V2/settlement tests, 104 web settlement/sidebar tests, and 8 scheduled-task UI
+    tests
+  - clean conflict-marker and diff checks
+- Remaining first-publication gate: remote publication.
+
+### 2026-07-23 - Refresh to current main
+
+- Previous baseline: `origin/main@2d31cb022dee43e5a729273a6936228f30077e29`
+- New baseline: `origin/main@b44ed835c63caafae619e303ca019a251c2698b2`
+- Merge commit: `67541df53`
+- Conflicts: ten Web files in ChatView/composer, Sidebar V2, timeline, diff/provider/popover surfaces,
+  and CSS after the upstream glass-surface redesign.
+- Decisions: retain V2 run, subagent, queue, settlement, and environment behavior while adopting the
+  current `main` glass layout, opacity settings, banner behavior, and dark-mode surfaces.
+- Verification: Web typecheck, 143 focused Web tests across ChatView/composer, Sidebar, timeline, and
+  provider settings, plus targeted formatting, lint with `--deny-warnings`, marker checks, and diff
+  checks.
+
+### 2026-07-23 - Slash commands, native goals, and first-publication verification
+
+- Feature commits:
+  - `8919694ea`: `/review`, `/compact`, goal contracts, migration, and durable projection
+  - `95dafb0e0`: provider runtime support for native Codex goals
+  - `617e948be`: no-run goal command service
+  - `6bd14fd4c`: goal RPC and client runtime
+  - `4e03d417b`: Web `/goal` UX and persistent goal display
+- Focused tests:
+
+  ```sh
+  corepack pnpm exec vp test run \
+    packages/contracts/src/orchestrationV2.test.ts \
+    packages/contracts/src/rpc.test.ts \
+    packages/client-runtime/src/operations/commands.test.ts \
+    packages/client-runtime/src/state/orchestrationV2Projection.test.ts \
+    apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.test.ts \
+    apps/server/src/orchestration-v2/ProjectionStore.test.ts \
+    apps/server/src/orchestration-v2/ProviderEventIngestor.test.ts \
+    apps/server/src/orchestration-v2/ProviderSessionManager.test.ts \
+    apps/server/src/orchestration-v2/RunExecutionService.test.ts \
+    apps/server/src/orchestration-v2/ThreadGoalService.test.ts \
+    apps/server/src/persistence/Migrations/041_OrchestrationV2ThreadGoals.test.ts \
+    apps/server/src/scheduledTasks/Schedule.test.ts \
+    apps/web/src/components/chat/threadGoalLogic.test.ts \
+    apps/web/src/components/chat/ThreadGoalControls.test.tsx \
+    apps/web/src/components/settings/ScheduledTasksSettings.logic.test.ts \
+    apps/web/src/components/settings/ScheduledTasksSettings.test.tsx
+  ```
+
+  Result: 16 files and 142 tests passed.
+- Affected-package typechecks passed for Contracts, Client Runtime, Server, Web, and Mobile.
+- `corepack pnpm exec vp lint --deny-warnings`, `corepack pnpm exec vp fmt --check`, and
+  `git diff --check` passed.
+- Integrated Web verification used a disposable base directory and a controlled headless Chromium
+  session because the connected preview tab could not reach the environment port. Verified:
+  - a real Codex thread exposes `/goal`, `/review`, and `/compact` in the slash-command menu
+  - `/goal <objective>` sets a native goal and the header/details UI persists after page reload
+  - GUI budget editing plus pause/resume and confirmed clear work
+  - SQLite message/run counts remain unchanged by goal operations
+  - a project-scoped interval task persists across reload, pauses/resumes, runs immediately into a
+    new Codex thread, reports a successful dispatch, and requires confirmation before deletion
+- `corepack pnpm exec vp run build:desktop` passed. The build retained existing chunk-size and
+  generated-declaration sourcemap warnings.
+- Release smoke passed with:
+
+  ```sh
+  PATH="$PWD/node_modules/.bin:$PATH" node scripts/release-smoke.ts
+  ```
+
+  The explicit path is required in shells where `vp` is not installed globally because the smoke
+  script spawns `vp` directly.
+- Final upstream refresh: `origin/main` remained
+  `b44ed835c63caafae619e303ca019a251c2698b2`; no additional merge was required.
 
 ## Completion and retirement rules
 

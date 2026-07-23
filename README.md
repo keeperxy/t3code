@@ -60,6 +60,7 @@ There's no public docs site yet, checkout the miscellaneous markdown files in [d
 - [Provider guides](./docs/providers/codex.md)
 - [Operations](./docs/operations/ci.md)
 - [Reference](./docs/reference/encyclopedia.md)
+- [Nightly integration maintenance](./.plans/nightly-main-plus-experimental.md) (fork branch)
 
 ## If you REALLY want to contribute still.... read this first
 
