@@ -198,7 +198,8 @@ const baseLayer: Layer.Layer<
           (event.type === "runtime-request.updated" &&
             event.payload.status === "pending" &&
             event.payload.kind !== "auth_refresh" &&
-            event.payload.kind !== "dynamic_tool_call");
+            event.payload.kind !== "dynamic_tool_call") ||
+          (event.type === "thread.goal-updated" && event.payload.status !== "complete");
         if (wakesSettledThread && !activityByThreadId.has(event.threadId)) {
           activityByThreadId.set(event.threadId, event);
         }

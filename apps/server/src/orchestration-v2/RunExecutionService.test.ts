@@ -181,6 +181,46 @@ it("does not route a superseded attempt through a reused provider thread", () =>
   assert.isFalse(routeProviderEvent(oldTurnEvent, newAttempt, newState)[0]);
 });
 
+it("does not route centrally persisted goal events through an active run", () => {
+  const threadId = ThreadId.make("thread:run-execution-goal-routing");
+  const providerThreadId = ProviderThreadId.make("provider-thread:run-execution-goal-routing");
+  const identity: ProviderEventRouteIdentity = {
+    threadId,
+    runId: RunId.make("run:run-execution-goal-routing"),
+    attemptId: RunAttemptId.make("attempt:run-execution-goal-routing"),
+    providerThreadId,
+  };
+  const state = makeProviderEventRoutingState({ identity, providerTurnId: null });
+  const now = DateTime.makeUnsafe("2026-07-23T11:00:00.000Z");
+  const updated: ProviderAdapterV2Event = {
+    type: "thread_goal.updated",
+    driver,
+    threadId,
+    providerThreadId,
+    goal: {
+      threadId,
+      providerThreadId,
+      objective: "Do not duplicate this event",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: now,
+      updatedAt: now,
+    },
+  };
+  const cleared: ProviderAdapterV2Event = {
+    type: "thread_goal.cleared",
+    driver,
+    threadId,
+    providerThreadId,
+    updatedAt: now,
+  };
+
+  assert.isFalse(routeProviderEvent(updated, identity, state)[0]);
+  assert.isFalse(routeProviderEvent(cleared, identity, state)[0]);
+});
+
 it.effect("rechecks run ownership immediately before calling the provider", () =>
   Effect.gen(function* () {
     const runExecution = yield* RunExecutionServiceV2;

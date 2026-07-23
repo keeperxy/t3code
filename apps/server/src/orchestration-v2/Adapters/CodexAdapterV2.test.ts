@@ -1349,6 +1349,215 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     );
   });
 
+  describe("native thread goals", () => {
+    const goalPayload = (input: {
+      readonly nativeThreadId: string;
+      readonly objective: string;
+      readonly status: "active" | "paused";
+      readonly updatedAt: number;
+    }) => ({
+      threadId: input.nativeThreadId,
+      objective: input.objective,
+      status: input.status,
+      tokenBudget: 50_000,
+      tokensUsed: 1_250,
+      timeUsedSeconds: 45,
+      createdAt: 1_782_622_440,
+      updatedAt: input.updatedAt,
+    });
+
+    it.effect(
+      "maps get/set/clear requests and emits canonical notifications only for known threads",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const scenario = "codex-native-thread-goals";
+            const nativeThreadId = "native-codex-goal-thread";
+            const readGoal = goalPayload({
+              nativeThreadId,
+              objective: "Ship the provider integration",
+              status: "active",
+              updatedAt: 1_782_622_450,
+            });
+            const updatedGoal = goalPayload({
+              nativeThreadId,
+              objective: "Ship and verify the provider integration",
+              status: "paused",
+              updatedAt: 1_782_622_460,
+            });
+            const transcript = makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                ...codexReplayThreadPreamble(nativeThreadId),
+                {
+                  type: "expect_outbound",
+                  label: "thread/goal/get",
+                  frame: {
+                    id: 3,
+                    method: "thread/goal/get",
+                    params: { threadId: nativeThreadId },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/get",
+                  frame: { id: 3, result: { goal: readGoal } },
+                },
+                {
+                  type: "expect_outbound",
+                  label: "thread/goal/set",
+                  frame: {
+                    id: 4,
+                    method: "thread/goal/set",
+                    params: {
+                      threadId: nativeThreadId,
+                      objective: "Ship and verify the provider integration",
+                      status: "paused",
+                      tokenBudget: 50_000,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/updated-unknown-thread",
+                  frame: {
+                    method: "thread/goal/updated",
+                    params: {
+                      threadId: "native-unknown-goal-thread",
+                      turnId: null,
+                      goal: {
+                        ...updatedGoal,
+                        threadId: "native-unknown-goal-thread",
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/updated",
+                  frame: {
+                    method: "thread/goal/updated",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: null,
+                      goal: updatedGoal,
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/set",
+                  frame: { id: 4, result: { goal: updatedGoal } },
+                },
+                {
+                  type: "expect_outbound",
+                  label: "thread/goal/clear",
+                  frame: {
+                    id: 5,
+                    method: "thread/goal/clear",
+                    params: { threadId: nativeThreadId },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/cleared-unknown-thread",
+                  frame: {
+                    method: "thread/goal/cleared",
+                    params: { threadId: "native-unknown-goal-thread" },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/cleared",
+                  frame: {
+                    method: "thread/goal/cleared",
+                    params: { threadId: nativeThreadId },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "thread/goal/clear",
+                  frame: { id: 5, result: { cleared: true } },
+                },
+              ],
+            });
+            const harness = yield* makeCodexReplayHarness(transcript);
+            const { runtime, providerThread, threadId } = harness;
+            if (
+              runtime.getThreadGoal === undefined ||
+              runtime.setThreadGoal === undefined ||
+              runtime.clearThreadGoal === undefined
+            ) {
+              return yield* Effect.die("Codex runtime must expose native goal operations.");
+            }
+
+            const read = yield* runtime.getThreadGoal({ threadId, providerThread });
+            if (read === null) {
+              return yield* Effect.die("Expected the native Codex goal.");
+            }
+            assert.equal(read?.threadId, threadId);
+            assert.equal(read?.providerThreadId, providerThread.id);
+            assert.equal(read?.objective, readGoal.objective);
+            assert.equal(read?.status, "active");
+            assert.equal(DateTime.toEpochMillis(read.createdAt), readGoal.createdAt * 1_000);
+            assert.equal(DateTime.toEpochMillis(read.updatedAt), readGoal.updatedAt * 1_000);
+
+            const updated = yield* runtime.setThreadGoal({
+              threadId,
+              providerThread,
+              objective: updatedGoal.objective,
+              status: "paused",
+              tokenBudget: 50_000,
+            });
+            assert.equal(updated.threadId, threadId);
+            assert.equal(updated.providerThreadId, providerThread.id);
+            assert.equal(updated.objective, updatedGoal.objective);
+            assert.equal(updated.status, "paused");
+
+            assert.isTrue(yield* runtime.clearThreadGoal({ threadId, providerThread }));
+            yield* awaitUntil(
+              () =>
+                harness.events.filter(
+                  (event) =>
+                    event.type === "thread_goal.updated" || event.type === "thread_goal.cleared",
+                ).length === 2,
+              "native goal notifications",
+            );
+            const goalEvents = harness.events.filter(
+              (
+                event,
+              ): event is Extract<
+                ProviderAdapterV2Event,
+                { type: "thread_goal.updated" | "thread_goal.cleared" }
+              > => event.type === "thread_goal.updated" || event.type === "thread_goal.cleared",
+            );
+            assert.lengthOf(goalEvents, 2);
+            const updateEvent = goalEvents[0];
+            assert.equal(updateEvent?.type, "thread_goal.updated");
+            if (updateEvent?.type === "thread_goal.updated") {
+              assert.equal(updateEvent.threadId, threadId);
+              assert.equal(updateEvent.providerThreadId, providerThread.id);
+              assert.equal(updateEvent.goal.objective, updatedGoal.objective);
+              assert.equal(
+                DateTime.toEpochMillis(updateEvent.goal.updatedAt),
+                updatedGoal.updatedAt * 1_000,
+              );
+            }
+            const clearEvent = goalEvents[1];
+            assert.equal(clearEvent?.type, "thread_goal.cleared");
+            if (clearEvent?.type === "thread_goal.cleared") {
+              assert.equal(clearEvent.threadId, threadId);
+              assert.equal(clearEvent.providerThreadId, providerThread.id);
+              assert.isAtLeast(
+                DateTime.toEpochMillis(clearEvent.updatedAt),
+                updatedGoal.updatedAt * 1_000,
+              );
+            }
+          }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        ),
+    );
+  });
+
   const BG_SCENARIO = "codex-bg-exec-wake";
   const BG_NATIVE_THREAD = "native-codex-bg-thread";
   const BG_NATIVE_TURN = "native-codex-bg-turn";

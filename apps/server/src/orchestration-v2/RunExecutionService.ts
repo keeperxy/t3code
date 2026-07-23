@@ -145,6 +145,12 @@ export function routeProviderEvent(
       // The session manager persists process-wide status once for every
       // attached app thread before broadcasting the adapter event.
       return [false, state];
+    case "thread_goal.updated":
+    case "thread_goal.cleared":
+      // Goal state is session-scoped provider activity. The session manager
+      // persists it once before broadcasting, so active runs must not ingest
+      // it a second time.
+      return [false, state];
     case "app_thread.created": {
       if (event.appThread.id === input.threadId) {
         return [true, state];

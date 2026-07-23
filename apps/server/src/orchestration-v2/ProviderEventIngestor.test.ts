@@ -189,6 +189,206 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect("maps goal revisions and rejects a stale clear through the durable projection", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const createdAt = DateTime.makeUnsafe("2026-07-23T08:00:00.000Z");
+      const updatedAt = DateTime.makeUnsafe("2026-07-23T08:02:00.000Z");
+      const staleClearedAt = DateTime.makeUnsafe("2026-07-23T08:01:00.000Z");
+      const clearedAt = DateTime.makeUnsafe("2026-07-23T08:03:00.000Z");
+      const threadEvent = yield* threadCreatedEvent(createdAt);
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-goal-thread",
+      });
+      const goal = {
+        threadId: threadEvent.threadId,
+        providerThreadId,
+        objective: "Persist the native goal",
+        status: "active" as const,
+        tokenBudget: 50_000,
+        tokensUsed: 1_000,
+        timeUsedSeconds: 30,
+        createdAt,
+        updatedAt,
+      };
+
+      yield* eventSink.write({ events: [threadEvent] });
+      const updated = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "thread_goal.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          providerThreadId,
+          goal,
+        },
+      });
+      assert.deepEqual(
+        updated.map((stored) => stored.event.type),
+        ["thread.goal-updated"],
+      );
+
+      const staleClear = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "thread_goal.cleared",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          providerThreadId,
+          updatedAt: staleClearedAt,
+        },
+      });
+      assert.equal(staleClear[0]?.event.type, "thread.goal-cleared");
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadEvent.threadId)).goal?.objective,
+        goal.objective,
+      );
+
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "thread_goal.cleared",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          providerThreadId,
+          updatedAt: clearedAt,
+        },
+      });
+      const cleared = yield* projectionStore.getThreadProjection(threadEvent.threadId);
+      assert.isNull(cleared.goal);
+      assert.deepEqual(cleared.goalRevision, { providerThreadId, updatedAt: clearedAt });
+    }),
+  );
+
+  it.effect("wakes a settled thread for active goal work but not for a completed goal", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const createdAt = DateTime.makeUnsafe("2026-07-23T09:00:00.000Z");
+      const settledAt = DateTime.makeUnsafe("2026-07-23T09:01:00.000Z");
+      const activeAt = DateTime.makeUnsafe("2026-07-23T09:02:00.000Z");
+      const completedAt = DateTime.makeUnsafe("2026-07-23T09:04:00.000Z");
+      const threadEvent = yield* threadCreatedEvent(createdAt);
+      if (threadEvent.type !== "thread.created") {
+        return yield* Effect.die("Expected a thread.created event.");
+      }
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const providerThreadId = idAllocator.derive.providerThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "native-settled-goal-thread",
+      });
+      const settledThread = {
+        ...threadEvent.payload,
+        settledOverride: "settled" as const,
+        settledAt,
+        updatedAt: settledAt,
+      };
+
+      yield* eventSink.write({
+        events: [
+          threadEvent,
+          {
+            id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+            type: "thread.settled",
+            threadId: threadEvent.threadId,
+            occurredAt: settledAt,
+            payload: settledThread,
+          },
+        ],
+      });
+      const activeStored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "thread_goal.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          providerThreadId,
+          goal: {
+            threadId: threadEvent.threadId,
+            providerThreadId,
+            objective: "Continue the native goal",
+            status: "active",
+            tokenBudget: null,
+            tokensUsed: 0,
+            timeUsedSeconds: 0,
+            createdAt,
+            updatedAt: activeAt,
+          },
+        },
+      });
+      assert.deepEqual(
+        activeStored.map((stored) => stored.event.type),
+        ["thread.unsettled", "thread.goal-updated"],
+      );
+      assert.isNull(
+        (yield* projectionStore.getThreadProjection(threadEvent.threadId)).thread.settledOverride,
+      );
+
+      yield* eventSink.write({
+        events: [
+          {
+            id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+            type: "thread.settled",
+            threadId: threadEvent.threadId,
+            occurredAt: settledAt,
+            payload: settledThread,
+          },
+        ],
+      });
+      const completeStored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: {
+          type: "thread_goal.updated",
+          driver: CODEX_DRIVER,
+          threadId: threadEvent.threadId,
+          providerThreadId,
+          goal: {
+            threadId: threadEvent.threadId,
+            providerThreadId,
+            objective: "Continue the native goal",
+            status: "complete",
+            tokenBudget: null,
+            tokensUsed: 100,
+            timeUsedSeconds: 5,
+            createdAt,
+            updatedAt: completedAt,
+          },
+        },
+      });
+      assert.deepEqual(
+        completeStored.map((stored) => stored.event.type),
+        ["thread.goal-updated"],
+      );
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadEvent.threadId)).thread.settledOverride,
+        "settled",
+      );
+    }),
+  );
+
   it.effect(
     "treats successful provider terminal markers as non-persisted orchestration control signals",
     () =>

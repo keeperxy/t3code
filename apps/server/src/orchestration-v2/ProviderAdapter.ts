@@ -15,6 +15,8 @@ import {
   OrchestrationV2ProviderTurn,
   OrchestrationV2RuntimeRequest,
   OrchestrationV2Subagent,
+  OrchestrationV2ThreadGoal,
+  OrchestrationV2ThreadGoalStatus,
   OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderInteractionMode,
@@ -123,6 +125,20 @@ export const ProviderAdapterV2Event = Schema.Union([
     type: Schema.Literal("plan.updated"),
     driver: ProviderDriverKind,
     plan: OrchestrationV2PlanArtifact,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread_goal.updated"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    goal: OrchestrationV2ThreadGoal,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread_goal.cleared"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    updatedAt: Schema.DateTimeUtc,
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
@@ -459,6 +475,17 @@ export interface ProviderAdapterV2ForkThreadInput {
   readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
 }
 
+export interface ProviderAdapterV2ThreadGoalInput {
+  readonly threadId: ThreadId;
+  readonly providerThread: OrchestrationV2ProviderThread;
+}
+
+export interface ProviderAdapterV2ThreadGoalSetInput extends ProviderAdapterV2ThreadGoalInput {
+  readonly objective?: OrchestrationV2ThreadGoal["objective"];
+  readonly status?: OrchestrationV2ThreadGoalStatus;
+  readonly tokenBudget?: OrchestrationV2ThreadGoal["tokenBudget"];
+}
+
 export interface ProviderAdapterV2EventSubscription {
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;
   readonly close: Effect.Effect<void>;
@@ -512,6 +539,19 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly forkThread: (
     input: ProviderAdapterV2ForkThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
+  /**
+   * Provider-native goal operations are optional because not every provider
+   * exposes a durable goal primitive.
+   */
+  readonly getThreadGoal?: (
+    input: ProviderAdapterV2ThreadGoalInput,
+  ) => Effect.Effect<OrchestrationV2ThreadGoal | null, ProviderAdapterV2Error>;
+  readonly setThreadGoal?: (
+    input: ProviderAdapterV2ThreadGoalSetInput,
+  ) => Effect.Effect<OrchestrationV2ThreadGoal, ProviderAdapterV2Error>;
+  readonly clearThreadGoal?: (
+    input: ProviderAdapterV2ThreadGoalInput,
+  ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
 }
 
 export interface ProviderAdapterV2Shape {

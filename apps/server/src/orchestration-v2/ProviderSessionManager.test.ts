@@ -31,7 +31,7 @@ import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EventSinkV2, EventSinkWriteError, layer as eventSinkLayer } from "./EventSink.ts";
-import { layer as eventStoreLayer } from "./EventStore.ts";
+import { EventStoreV2, layer as eventStoreLayer } from "./EventStore.ts";
 import {
   IdAllocatorV2,
   type IdAllocatorV2Shape,
@@ -47,6 +47,7 @@ import {
   type ProviderAdapterV2Shape,
 } from "./ProviderAdapter.ts";
 import { makeSingleLayer as makeProviderAdapterRegistryLayer } from "./ProviderAdapterRegistry.ts";
+import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import {
   ProviderSessionManagerV2,
   layerWithOptions as providerSessionManagerLayerWithOptions,
@@ -341,6 +342,9 @@ function makeTestLayer(input: {
   const configuredEventSinkLayer = input.failReleaseEventWrites
     ? FailingReleaseEventSinkLayer
     : TestEventSinkLayer;
+  const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
+    Layer.provide(Layer.merge(configuredEventSinkLayer, idAllocatorLayer)),
+  );
   const registryLayer = makeProviderAdapterRegistryLayer(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -359,6 +363,7 @@ function makeTestLayer(input: {
     TestStoresLayer,
     configuredEventSinkLayer,
     idAllocatorLayer,
+    providerEventIngestorProvided,
     TestMcpRegistryLayer,
     providerSessionManagerLayerWithOptions({
       idleTimeoutMs: input.idleTimeoutMs,
@@ -369,6 +374,7 @@ function makeTestLayer(input: {
           registryLayer,
           configuredEventSinkLayer,
           idAllocatorLayer,
+          providerEventIngestorProvided,
           TestMcpRegistryLayer,
           TestStoresLayer,
         ),
@@ -638,6 +644,80 @@ it.effect("ProviderSessionManagerV2 opens a duplicate session only once", () =>
         }),
       ),
     );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 persists provider goal events once before broadcasting", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const eventStore = yield* EventStoreV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const createdAt = DateTime.makeUnsafe("2026-07-23T10:00:00.000Z");
+      const updatedAt = DateTime.makeUnsafe("2026-07-23T10:01:00.000Z");
+      const threadId = ThreadId.make("thread-provider-session-manager-goal");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now: createdAt,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now: createdAt })],
+      });
+      const runtime = yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+      if (runtime.subscribeEvents === undefined) {
+        return yield* Effect.die("Managed runtime must expose event subscriptions.");
+      }
+      const subscription = yield* runtime.subscribeEvents;
+      const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId));
+      if (queue === undefined) {
+        return yield* Effect.die("Expected the provider event queue.");
+      }
+      yield* Queue.offer(queue, {
+        type: "thread_goal.updated",
+        driver: CODEX_DRIVER,
+        threadId,
+        providerThreadId: providerThread.id,
+        goal: {
+          threadId,
+          providerThreadId: providerThread.id,
+          objective: "Persist exactly once",
+          status: "active",
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt,
+          updatedAt,
+        },
+      });
+
+      const broadcast = yield* subscription.events.pipe(Stream.runHead);
+      assert.isTrue(Option.isSome(broadcast));
+      assert.equal(Option.getOrThrow(broadcast).type, "thread_goal.updated");
+      const projection = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projection.goal?.objective, "Persist exactly once");
+      const stored = yield* eventStore.read({ threadId }).pipe(Stream.runCollect);
+      assert.equal(
+        Array.from(stored).filter((entry) => entry.event.type === "thread.goal-updated").length,
+        1,
+      );
+    });
+
+    yield* effect.pipe(Effect.provide(makeTestLayer({ state, idleTimeoutMs: 60_000 })));
   }),
 );
 

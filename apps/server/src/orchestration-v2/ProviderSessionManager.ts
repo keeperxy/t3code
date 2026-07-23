@@ -37,6 +37,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
 } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
+import { ProviderEventIngestorV2 } from "./ProviderEventIngestor.ts";
 import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
@@ -244,6 +245,7 @@ export const layerWithOptions = (
   | McpSessionRegistry.McpSessionRegistry
   | ProjectionStoreV2
   | ProviderAdapterRegistryV2
+  | ProviderEventIngestorV2
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
@@ -253,6 +255,7 @@ export const layerWithOptions = (
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
       const projectionStore = yield* ProjectionStoreV2;
+      const providerEventIngestor = yield* ProviderEventIngestorV2;
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       const nextSubscriberId = yield* Ref.make(0);
@@ -1107,6 +1110,31 @@ export const layerWithOptions = (
           ),
         );
 
+      const persistThreadGoalEvent = (
+        entry: LiveSessionEntry,
+        event: Extract<
+          ProviderAdapterV2Event,
+          { readonly type: "thread_goal.updated" | "thread_goal.cleared" }
+        >,
+      ) =>
+        providerEventIngestor
+          .ingestNormalized({
+            providerSessionId: entry.runtime.providerSessionId,
+            providerInstanceId: entry.runtime.instanceId,
+            threadId: event.threadId,
+            event,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapterEventStreamError({
+                  driver: entry.runtime.driver,
+                  providerSessionId: entry.runtime.providerSessionId,
+                  cause,
+                }),
+            ),
+          );
+
       const startEventPump = (entry: LiveSessionEntry) =>
         entry.runtime.events.pipe(
           Stream.runForEach((event) =>
@@ -1119,7 +1147,9 @@ export const layerWithOptions = (
               Effect.andThen(
                 event.type === "provider_session.updated"
                   ? persistProviderSessionUpdate(entry, event)
-                  : Effect.void,
+                  : event.type === "thread_goal.updated" || event.type === "thread_goal.cleared"
+                    ? persistThreadGoalEvent(entry, event)
+                    : Effect.void,
               ),
               Effect.andThen(
                 publishToSubscribers(entry.eventSubscribers, { type: "event", event }),

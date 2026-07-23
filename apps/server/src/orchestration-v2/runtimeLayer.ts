@@ -90,6 +90,7 @@ const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
       eventSinkProvided,
       idAllocatorLayer,
       projectionStoreLayer,
+      providerEventIngestorProvided,
     ),
   ),
 );
