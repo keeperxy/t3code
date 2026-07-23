@@ -232,14 +232,15 @@ Useful variants:
 # Open the system browser automatically.
 ./scripts/start-nightly-web.sh --open-browser
 
-# Make the Web UI reachable from another machine.
-./scripts/start-nightly-web.sh \
-  --host 0.0.0.0 \
-  --web-url http://192.168.1.20:5733
+# Override the automatically detected address when needed.
+./scripts/start-nightly-web.sh --network-host 192.168.1.20
 ```
 
-Use the actual host name, LAN address, or Tailnet address for `--web-url`. The wrapper forwards
-additional arguments such as `--dry-run` or `--port` to `scripts/dev-runner.ts`.
+The wrapper binds to `0.0.0.0` by default, detects the primary LAN address, and configures the browser
+to use network-reachable Web, HTTP API, and WebSocket URLs. Use the actual LAN or Tailnet address for
+`--network-host` when auto-detection selects the wrong interface. Advanced overrides are available
+through `--web-url`, `--api-url`, and `--port`; other arguments such as `--dry-run` are forwarded to
+`scripts/dev-runner.ts`.
 
 ## Sync log
 
@@ -338,12 +339,15 @@ additional arguments such as `--dry-run` or `--port` to `scripts/dev-runner.ts`.
 ### 2026-07-23 - Local Web launcher
 
 - Added `scripts/start-nightly-web.sh` and the `nightly:web` package command.
-- Defaults to loopback binding and persistent branch-local state under
-  `.t3/nightly-main-plus-experimental`.
+- Defaults to all-interface binding, auto-detects the primary LAN address, and keeps persistent
+  branch-local state under `.t3/nightly-main-plus-experimental`.
 - Supports automatic browser opening, remote binding with an explicit public pairing URL, custom
   state directories, and forwarding of dev-runner options.
-- Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts` and retain the
-  repository-local `corepack pnpm exec vp` invocation so no global `vp` install is required.
+- The dev runner now accepts `--api-url` so remote browsers use network-reachable HTTP and WebSocket
+  endpoints instead of their own `localhost`.
+- Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts`, verify LAN-address
+  detection on the target host, and retain the repository-local `corepack pnpm exec vp` invocation so
+  no global `vp` install is required.
 
 ## Completion and retirement rules
 

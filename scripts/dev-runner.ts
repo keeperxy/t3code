@@ -227,6 +227,7 @@ interface CreateDevRunnerEnvInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  readonly apiUrl?: URL | undefined;
 }
 
 export function createDevRunnerEnv({
@@ -241,6 +242,7 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
+  apiUrl,
 }: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
@@ -265,8 +267,19 @@ export function createDevRunnerEnv({
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
-      output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
-      output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+      if (apiUrl) {
+        const httpUrl = new URL(apiUrl);
+        httpUrl.pathname = "";
+        httpUrl.search = "";
+        httpUrl.hash = "";
+        const wsUrl = new URL(httpUrl);
+        wsUrl.protocol = httpUrl.protocol === "https:" ? "wss:" : "ws:";
+        output.VITE_HTTP_URL = httpUrl.toString().replace(/\/$/, "");
+        output.VITE_WS_URL = wsUrl.toString().replace(/\/$/, "");
+      } else {
+        output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
+        output.VITE_WS_URL = `ws://localhost:${serverPort}`;
+      }
     } else {
       output.T3CODE_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
@@ -479,6 +492,7 @@ interface DevRunnerCliInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  readonly apiUrl?: URL | undefined;
   readonly dryRun: boolean;
   readonly runArgs: ReadonlyArray<string>;
 }
@@ -517,6 +531,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       host: input.host,
       port: input.port,
       devUrl: input.devUrl,
+      apiUrl: input.apiUrl,
     });
 
     const selectionSuffix =
@@ -623,6 +638,14 @@ const devRunnerCli = Command.make("dev-runner", {
     Flag.withSchema(Schema.URLFromString),
     Flag.withDescription(
       "Explicit web dev URL override (forwards to VITE_DEV_SERVER_URL). Ambient VITE_DEV_SERVER_URL values are ignored so a parent dev app cannot redirect the child runner.",
+    ),
+    Flag.optional,
+    Flag.map(Option.getOrUndefined),
+  ),
+  apiUrl: Flag.string("api-url").pipe(
+    Flag.withSchema(Schema.URLFromString),
+    Flag.withDescription(
+      "Explicit browser-facing API URL override (forwards to VITE_HTTP_URL and derives VITE_WS_URL).",
     ),
     Flag.optional,
     Flag.map(Option.getOrUndefined),

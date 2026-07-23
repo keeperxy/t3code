@@ -340,6 +340,30 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
       }),
     );
+
+    it.effect("uses an explicit browser-facing API URL for network clients", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: undefined,
+          browser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: "0.0.0.0",
+          port: 13_773,
+          devUrl: new URL("http://192.168.1.20:5733"),
+          apiUrl: new URL("http://192.168.1.20:13773"),
+        });
+
+        assert.equal(env.VITE_DEV_SERVER_URL, "http://192.168.1.20:5733/");
+        assert.equal(env.VITE_HTTP_URL, "http://192.168.1.20:13773");
+        assert.equal(env.VITE_WS_URL, "ws://192.168.1.20:13773");
+        assert.equal(env.T3CODE_HOST, "0.0.0.0");
+      }),
+    );
   });
 
   describe("findFirstAvailableOffset", () => {
