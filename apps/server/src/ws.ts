@@ -34,6 +34,7 @@ import {
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2ThreadGoalCommandError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
@@ -73,6 +74,7 @@ import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import * as ThreadManagementService from "./orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
+import * as ThreadGoalService from "./orchestration-v2/ThreadGoalService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import {
   archivedShellStreamItemFromSnapshot,
@@ -314,6 +316,7 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot, AuthOrchestrationReadScope],
   [ORCHESTRATION_V2_WS_METHODS.getThreadProjection, AuthOrchestrationReadScope],
   [ORCHESTRATION_V2_WS_METHODS.launchThread, AuthOrchestrationOperateScope],
+  [ORCHESTRATION_V2_WS_METHODS.threadGoalCommand, AuthOrchestrationOperateScope],
   [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell, AuthOrchestrationReadScope],
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread, AuthOrchestrationReadScope],
@@ -459,6 +462,7 @@ const makeWsRpcLayer = (
           ),
       );
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
+      const threadGoal = yield* ThreadGoalService.ThreadGoalService;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const projectService = yield* ProjectService.ProjectService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -1127,6 +1131,26 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "orchestration",
               "orchestration_v2.command_id": input.commandId,
               "orchestration_v2.project_id": input.projectId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.threadGoalCommand]: (command) =>
+          observeRpcEffect(
+            ORCHESTRATION_V2_WS_METHODS.threadGoalCommand,
+            startup.enqueueCommand(threadGoal.execute(command)).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2ThreadGoalCommandError({
+                    commandId: command.commandId,
+                    threadId: command.threadId,
+                    message: cause.message,
+                  }),
+              ),
+            ),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.command_id": command.commandId,
+              "orchestration_v2.command_type": `thread.goal.${command.type}`,
+              "orchestration_v2.thread_id": command.threadId,
             },
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell]: (_input) =>

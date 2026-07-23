@@ -8,6 +8,7 @@ describe("WebSocket RPC contracts", () => {
     const methods = [...WsRpcGroup.requests.keys()];
 
     expect(methods).toEqual(expect.arrayContaining(Object.values(ORCHESTRATION_V2_WS_METHODS)));
+    expect(methods).toContain(ORCHESTRATION_V2_WS_METHODS.threadGoalCommand);
     expect(methods.filter((method) => method.startsWith("orchestrationV1."))).toEqual([]);
   });
 });

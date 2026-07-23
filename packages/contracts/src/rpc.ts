@@ -61,6 +61,7 @@ import {
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2RpcSchemas,
+  OrchestrationV2ThreadGoalCommandError,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
 import {
@@ -694,6 +695,15 @@ export const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_MET
   error: Schema.Union([OrchestrationV2ThreadLaunchError, EnvironmentAuthorizationError]),
 });
 
+export const WsOrchestrationV2ThreadGoalCommandRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.threadGoalCommand,
+  {
+    payload: OrchestrationV2RpcSchemas.threadGoalCommand.input,
+    success: OrchestrationV2RpcSchemas.threadGoalCommand.output,
+    error: Schema.Union([OrchestrationV2ThreadGoalCommandError, EnvironmentAuthorizationError]),
+  },
+);
+
 export const WsOrchestrationV2SubscribeArchivedShellRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeArchivedShell,
   {
@@ -875,6 +885,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2ThreadGoalCommandRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,

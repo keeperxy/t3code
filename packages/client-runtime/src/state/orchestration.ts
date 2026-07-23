@@ -2,6 +2,7 @@ import { ORCHESTRATION_V2_WS_METHODS } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
 import {
+  createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
@@ -11,6 +12,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 export function createOrchestrationEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
+  const commandScheduler = createAtomCommandScheduler();
   return {
     v2: {
       dispatchCommand: createEnvironmentRpcCommand(runtime, {
@@ -22,6 +24,15 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         tag: ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
         staleTimeMs: 0,
         idleTtlMs: 0,
+      }),
+      threadGoalCommand: createEnvironmentRpcCommand(runtime, {
+        label: "environment-data:orchestration-v2:thread-goal-command",
+        tag: ORCHESTRATION_V2_WS_METHODS.threadGoalCommand,
+        scheduler: commandScheduler,
+        concurrency: {
+          mode: "serial",
+          key: ({ environmentId, input }) => JSON.stringify([environmentId, input.threadId]),
+        },
       }),
       shell: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
         label: "environment-data:orchestration-v2:shell",

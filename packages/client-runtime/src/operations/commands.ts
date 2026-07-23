@@ -8,6 +8,8 @@ import {
   type ModelSelection,
   type OrchestrationV2Command,
   type OrchestrationV2CreationSource,
+  type OrchestrationV2ThreadGoalCommand,
+  type OrchestrationV2ThreadGoalStatus,
   type PlanId,
   type ProjectId,
   type ProjectScript,
@@ -75,6 +77,20 @@ export type SettleThreadInput = ThreadCommandInput;
 
 export interface UnsettleThreadInput extends ThreadCommandInput {
   readonly reason: "user";
+}
+
+export interface SetThreadGoalInput extends ThreadCommandInput {
+  readonly objective?: string;
+  readonly status?: OrchestrationV2ThreadGoalStatus;
+  readonly tokenBudget?: number | null;
+}
+
+export interface SetThreadGoalStatusInput extends ThreadCommandInput {
+  readonly status: OrchestrationV2ThreadGoalStatus;
+}
+
+export interface SetThreadGoalTokenBudgetInput extends ThreadCommandInput {
+  readonly tokenBudget: number | null;
 }
 
 export interface UpdateThreadMetadataInput extends ThreadCommandInput {
@@ -188,6 +204,9 @@ const dispatch = (command: OrchestrationV2Command) =>
 
 const getProjection = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+
+const executeThreadGoalCommand = (command: OrchestrationV2ThreadGoalCommand) =>
+  request(ORCHESTRATION_V2_WS_METHODS.threadGoalCommand, command);
 
 const persistAttachments = Effect.fn("EnvironmentCommands.persistAttachments")(function* (
   threadId: ThreadId,
@@ -358,6 +377,51 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+  });
+});
+
+export const refreshThreadGoal = Effect.fn("EnvironmentCommands.refreshThreadGoal")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* executeThreadGoalCommand({
+    type: "refresh",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+  });
+});
+
+export const setThreadGoal = Effect.fn("EnvironmentCommands.setThreadGoal")(function* (
+  input: SetThreadGoalInput,
+) {
+  return yield* executeThreadGoalCommand({
+    type: "set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    ...(input.objective === undefined ? {} : { objective: input.objective }),
+    ...(input.status === undefined ? {} : { status: input.status }),
+    ...(input.tokenBudget === undefined ? {} : { tokenBudget: input.tokenBudget }),
+  });
+});
+
+export const setThreadGoalStatus = Effect.fn("EnvironmentCommands.setThreadGoalStatus")(function* (
+  input: SetThreadGoalStatusInput,
+) {
+  return yield* setThreadGoal(input);
+});
+
+export const setThreadGoalTokenBudget = Effect.fn("EnvironmentCommands.setThreadGoalTokenBudget")(
+  function* (input: SetThreadGoalTokenBudgetInput) {
+    return yield* setThreadGoal(input);
+  },
+);
+
+export const clearThreadGoal = Effect.fn("EnvironmentCommands.clearThreadGoal")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* executeThreadGoalCommand({
+    type: "clear",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
   });
 });
 

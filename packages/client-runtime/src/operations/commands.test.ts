@@ -10,10 +10,13 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   WS_METHODS,
   type OrchestrationV2Command,
+  type OrchestrationV2ThreadGoalCommand,
+  type OrchestrationV2ThreadGoalCommandResult,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
   type ProjectMutation,
@@ -37,12 +40,17 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
+  clearThreadGoal,
   createProject,
   forkThreadFromRun,
   mergeThreadBack,
   promoteQueuedRun,
   reorderQueuedRun,
+  refreshThreadGoal,
   revertThreadCheckpoint,
+  setThreadGoal,
+  setThreadGoalStatus,
+  setThreadGoalTokenBudget,
   settleThread,
   startThreadTurn,
   unsettleThread,
@@ -68,6 +76,8 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly commands: OrchestrationV2Command[];
   readonly projects: ProjectMutation[];
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
+  readonly goalCommands?: OrchestrationV2ThreadGoalCommand[];
+  readonly goalResult?: OrchestrationV2ThreadGoalCommandResult;
   readonly projection?: OrchestrationV2ThreadProjection;
 }) {
   const client = {
@@ -86,6 +96,11 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
           projection: input.projection ?? v2Projection,
           resumed: false,
         };
+      }),
+    [ORCHESTRATION_V2_WS_METHODS.threadGoalCommand]: (command: OrchestrationV2ThreadGoalCommand) =>
+      Effect.sync(() => {
+        input.goalCommands?.push(command);
+        return input.goalResult ?? { sequence: 0, goal: null };
       }),
     [WS_METHODS.projectsMutate]: (mutation: ProjectMutation) =>
       Effect.sync(() => {
@@ -124,6 +139,91 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
+  it.effect("runs goal commands through their dedicated RPC and returns authoritative state", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const launches: OrchestrationV2ThreadLaunchInput[] = [];
+      const goalCommands: OrchestrationV2ThreadGoalCommand[] = [];
+      const goal = {
+        threadId: v2ThreadId,
+        providerThreadId: ProviderThreadId.make("provider-thread-goal"),
+        objective: "Ship the nightly integration",
+        status: "active" as const,
+        tokenBudget: 50_000,
+        tokensUsed: 1_000,
+        timeUsedSeconds: 120,
+        createdAt: v2Now,
+        updatedAt: DateTime.makeUnsafe("2026-07-23T12:00:00.000Z"),
+      };
+      const authoritativeResult = { sequence: 42, goal };
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        launches,
+        goalCommands,
+        goalResult: authoritativeResult,
+      });
+      const provide = Effect.provideService(
+        EnvironmentSupervisor.EnvironmentSupervisor,
+        supervisor,
+      );
+
+      yield* refreshThreadGoal({
+        commandId: CommandId.make("goal-refresh"),
+        threadId: v2ThreadId,
+      }).pipe(provide);
+      const result = yield* setThreadGoal({
+        commandId: CommandId.make("goal-set"),
+        threadId: v2ThreadId,
+        objective: goal.objective,
+        status: "active",
+        tokenBudget: goal.tokenBudget,
+      }).pipe(provide);
+      yield* setThreadGoalStatus({
+        commandId: CommandId.make("goal-pause"),
+        threadId: v2ThreadId,
+        status: "paused",
+      }).pipe(provide);
+      yield* setThreadGoalTokenBudget({
+        commandId: CommandId.make("goal-budget"),
+        threadId: v2ThreadId,
+        tokenBudget: null,
+      }).pipe(provide);
+      yield* clearThreadGoal({
+        commandId: CommandId.make("goal-clear"),
+        threadId: v2ThreadId,
+      }).pipe(provide);
+
+      expect(result).toEqual(authoritativeResult);
+      expect(goalCommands).toEqual([
+        { type: "refresh", commandId: "goal-refresh", threadId: v2ThreadId },
+        {
+          type: "set",
+          commandId: "goal-set",
+          threadId: v2ThreadId,
+          objective: goal.objective,
+          status: "active",
+          tokenBudget: 50_000,
+        },
+        {
+          type: "set",
+          commandId: "goal-pause",
+          threadId: v2ThreadId,
+          status: "paused",
+        },
+        {
+          type: "set",
+          commandId: "goal-budget",
+          threadId: v2ThreadId,
+          tokenBudget: null,
+        },
+        { type: "clear", commandId: "goal-clear", threadId: v2ThreadId },
+      ]);
+      expect(commands).toEqual([]);
+      expect(launches).toEqual([]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("routes projects through the event-sourced project transport", () =>
     Effect.gen(function* () {
       const projects: ProjectMutation[] = [];
