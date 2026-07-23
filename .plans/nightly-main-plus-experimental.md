@@ -1,6 +1,6 @@
 # Nightly Main Plus Experimental Integration
 
-Status: READY_FOR_PUBLICATION
+Status: DONE
 
 Last updated: 2026-07-23
 
@@ -29,8 +29,8 @@ upstream work before it reaches `pingdotgg/t3code:main`.
 | PR #3638 | merge commit `dac514e6b6237c07e9ab3c5415e97472a96926b2` | 2026-07-23 | Integrated through PR #2829; not present on upstream `main` |
 | Issue #3164 | open | 2026-07-23 | Cron/prompt MVP integrated; external event triggers remain upstream scope |
 
-The implementation and first-publication verification are complete. The only remaining gate is
-publishing and verifying `fork/nightly/main-plus-experimental`.
+The implementation, first-publication verification, and remote publication are complete.
+`fork/nightly/main-plus-experimental` is the durable integration ref.
 
 ## Feature ledger
 
@@ -234,7 +234,8 @@ The first publication establishes a buildable branch, not a production release c
     tests, 204 mobile V2/settlement tests, 104 web settlement/sidebar tests, and 8 scheduled-task UI
     tests
   - clean conflict-marker and diff checks
-- Remaining first-publication gate: remote publication.
+- Initial publication head: `db0cd8532`; the final documentation update was pushed immediately
+  afterward and the remote ref was verified against local `HEAD`.
 
 ### 2026-07-23 - Refresh to current main
 
@@ -303,6 +304,8 @@ The first publication establishes a buildable branch, not a production release c
   script spawns `vp` directly.
 - Final upstream refresh: `origin/main` remained
   `b44ed835c63caafae619e303ca019a251c2698b2`; no additional merge was required.
+- Publication: created `fork/nightly/main-plus-experimental` without force-push, set it as the local
+  upstream, and verified the final remote ref against local `HEAD`.
 
 ## Completion and retirement rules
 
