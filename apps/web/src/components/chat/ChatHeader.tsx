@@ -1,14 +1,17 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, OrchestrationV2ThreadGoal } from "@t3tools/contracts";
 import { memo } from "react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { ThreadGoalHeaderBadge } from "./ThreadGoalControls";
 
 interface ChatHeaderProps {
   activeThreadTitle: string;
   activeThreadEnvironmentId?: EnvironmentId;
   activeProjectName?: string;
   activeProjectCwd?: string | null;
+  goal?: OrchestrationV2ThreadGoal | null;
+  onOpenGoal?: () => void;
   rightPanelOpen: boolean;
 }
 
@@ -17,6 +20,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeProjectName,
   activeProjectCwd,
+  goal,
+  onOpenGoal,
   rightPanelOpen,
 }: ChatHeaderProps) {
   return (
@@ -62,6 +67,7 @@ export const ChatHeader = memo(function ChatHeader({
           />
           <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
         </Tooltip>
+        {goal && onOpenGoal ? <ThreadGoalHeaderBadge goal={goal} onOpen={onOpenGoal} /> : null}
       </div>
     </div>
   );

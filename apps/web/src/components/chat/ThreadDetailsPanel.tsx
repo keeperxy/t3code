@@ -1,6 +1,7 @@
 import type {
   EditorId,
   EnvironmentId,
+  OrchestrationV2ThreadGoal,
   ProjectScript,
   ResolvedKeybindingsConfig,
   ThreadId,
@@ -22,6 +23,7 @@ import { cn } from "../../lib/utils";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadAutomationsPanel } from "./ThreadAutomationsPanel";
 import { ThreadRelationshipsPanel } from "./ThreadRelationshipsControl";
+import { ThreadGoalSection } from "./ThreadGoalControls";
 
 interface VersionMismatchIssue {
   readonly clientVersion: string;
@@ -67,6 +69,13 @@ export interface ThreadDetailsPanelProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  goal: OrchestrationV2ThreadGoal | null;
+  goalAvailability: "available" | "draft" | "unsupported-provider";
+  goalBusy: boolean;
+  goalError: string | null;
+  onEditGoal: () => void;
+  onGoalStatusChange: (status: "active" | "paused") => void;
+  onClearGoal: () => Promise<boolean>;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -235,6 +244,16 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
           </div>
         </section>
       ) : null}
+
+      <ThreadGoalSection
+        goal={props.goal}
+        availability={props.goalAvailability}
+        busy={props.goalBusy}
+        error={props.goalError}
+        onEdit={props.onEditGoal}
+        onStatusChange={props.onGoalStatusChange}
+        onClear={props.onClearGoal}
+      />
 
       {!props.draftId ? (
         <ThreadAutomationsPanel environmentId={props.environmentId} threadId={props.threadId} />

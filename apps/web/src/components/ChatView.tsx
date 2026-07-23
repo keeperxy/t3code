@@ -222,6 +222,12 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { ThreadGoalDialog } from "./chat/ThreadGoalControls";
+import {
+  canShowThreadGoalComposerCommand,
+  resolveThreadGoalSubmission,
+  type ThreadGoalSlashCommand,
+} from "./chat/threadGoalLogic";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
@@ -1143,6 +1149,11 @@ function ChatViewContent(props: ChatViewProps) {
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
+  const setThreadGoal = useAtomCommand(threadEnvironment.setGoal, { reportFailure: false });
+  const setThreadGoalStatus = useAtomCommand(threadEnvironment.setGoalStatus, {
+    reportFailure: false,
+  });
+  const clearThreadGoal = useAtomCommand(threadEnvironment.clearGoal, { reportFailure: false });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const interruptThreadTurn = useAtomCommand(threadEnvironment.interruptTurn, {
     reportFailure: false,
@@ -1990,6 +2001,181 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind =
     modelPickerLockedProvider ?? unlockedSelectedProvider;
+  const activeThreadGoal = serverProjection?.goal ?? null;
+  const goalAvailability: ThreadDetailsPanelProps["goalAvailability"] = !isServerThread
+    ? "draft"
+    : selectedProvider === "codex"
+      ? "available"
+      : "unsupported-provider";
+  const goalUnavailableReason =
+    goalAvailability === "draft"
+      ? "Send a first message to create this thread before setting a goal."
+      : goalAvailability === "unsupported-provider"
+        ? "Native thread goals are currently available for Codex threads only."
+        : null;
+  const [goalDialogOpen, setGoalDialogOpen] = useState(false);
+  const [goalAction, setGoalAction] = useState<"save" | "status" | "clear" | null>(null);
+  const [goalError, setGoalError] = useState<string | null>(null);
+  const goalBusy = goalAction !== null;
+
+  useEffect(() => {
+    setGoalDialogOpen(false);
+    setGoalAction(null);
+    setGoalError(null);
+  }, [routeThreadKey]);
+
+  const openGoalDialog = useCallback(() => {
+    if (goalAvailability !== "available") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Thread goal unavailable",
+          description: goalUnavailableReason ?? "Thread goals are unavailable.",
+        }),
+      );
+      return;
+    }
+    setGoalError(null);
+    setGoalDialogOpen(true);
+  }, [goalAvailability, goalUnavailableReason]);
+
+  const saveThreadGoal = useCallback(
+    async (input: { objective: string; tokenBudget?: number | null }): Promise<boolean> => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        goalAvailability !== "available" ||
+        goalAction !== null
+      ) {
+        if (goalAvailability !== "available") {
+          setGoalError(goalUnavailableReason ?? "Thread goals are unavailable.");
+        }
+        return false;
+      }
+      setGoalAction("save");
+      setGoalError(null);
+      const result = await setThreadGoal({
+        environmentId,
+        input: {
+          threadId: activeThread.id,
+          objective: input.objective,
+          ...(input.tokenBudget === undefined ? {} : { tokenBudget: input.tokenBudget }),
+        },
+      });
+      setGoalAction(null);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          setGoalError(chatActionErrorMessage(squashAtomCommandFailure(result)));
+        }
+        return false;
+      }
+      return true;
+    },
+    [
+      activeThread,
+      environmentId,
+      goalAction,
+      goalAvailability,
+      goalUnavailableReason,
+      isServerThread,
+      setThreadGoal,
+    ],
+  );
+
+  const changeThreadGoalStatus = useCallback(
+    async (status: "active" | "paused"): Promise<boolean> => {
+      if (
+        !activeThread ||
+        !isServerThread ||
+        goalAvailability !== "available" ||
+        goalAction !== null
+      ) {
+        if (goalAvailability !== "available") {
+          setGoalError(goalUnavailableReason ?? "Thread goals are unavailable.");
+        }
+        return false;
+      }
+      setGoalAction("status");
+      setGoalError(null);
+      const result = await setThreadGoalStatus({
+        environmentId,
+        input: { threadId: activeThread.id, status },
+      });
+      setGoalAction(null);
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          setGoalError(chatActionErrorMessage(squashAtomCommandFailure(result)));
+        }
+        return false;
+      }
+      return true;
+    },
+    [
+      activeThread,
+      environmentId,
+      goalAction,
+      goalAvailability,
+      goalUnavailableReason,
+      isServerThread,
+      setThreadGoalStatus,
+    ],
+  );
+
+  const handleClearThreadGoal = useCallback(async (): Promise<boolean> => {
+    if (
+      !activeThread ||
+      !isServerThread ||
+      goalAvailability !== "available" ||
+      goalAction !== null
+    ) {
+      if (goalAvailability !== "available") {
+        setGoalError(goalUnavailableReason ?? "Thread goals are unavailable.");
+      }
+      return false;
+    }
+    setGoalAction("clear");
+    setGoalError(null);
+    const result = await clearThreadGoal({
+      environmentId,
+      input: { threadId: activeThread.id },
+    });
+    setGoalAction(null);
+    if (result._tag === "Failure") {
+      if (!isAtomCommandInterrupted(result)) {
+        setGoalError(chatActionErrorMessage(squashAtomCommandFailure(result)));
+      }
+      return false;
+    }
+    return true;
+  }, [
+    activeThread,
+    clearThreadGoal,
+    environmentId,
+    goalAction,
+    goalAvailability,
+    goalUnavailableReason,
+    isServerThread,
+  ]);
+
+  const handleThreadGoalSlashCommand = useCallback(
+    async (command: ThreadGoalSlashCommand): Promise<boolean> => {
+      switch (command.type) {
+        case "open":
+        case "edit":
+          openGoalDialog();
+          return true;
+        case "set":
+          return saveThreadGoal({ objective: command.objective });
+        case "pause":
+          return changeThreadGoalStatus("paused");
+        case "resume":
+          return changeThreadGoalStatus("active");
+        case "clear":
+          return handleClearThreadGoal();
+      }
+    },
+    [changeThreadGoalStatus, handleClearThreadGoal, openGoalDialog, saveThreadGoal],
+  );
   const phase = derivePhase(activeRuntime);
   const pendingRequests = useMemo(
     () =>
@@ -4497,6 +4683,36 @@ function ChatViewContent(props: ChatViewProps) {
         composerPreviewAnnotations.length +
         composerReviewComments.length,
     });
+    const goalSubmission = resolveThreadGoalSubmission({
+      prompt: trimmed,
+      hasAdditionalContent:
+        composerImages.length > 0 ||
+        composerTerminalContexts.length > 0 ||
+        composerElementContexts.length > 0 ||
+        composerPreviewAnnotations.length > 0 ||
+        composerReviewComments.length > 0,
+      isMaterializedThread: isServerThread,
+      provider: ctxSelectedProvider,
+    });
+    if (goalSubmission.type === "unsupported") {
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Thread goal unavailable",
+          description: goalSubmission.reason,
+        }),
+      );
+      return;
+    }
+    if (goalSubmission.type === "goal-command") {
+      const handled = await handleThreadGoalSlashCommand(goalSubmission.command);
+      if (handled) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
+      return;
+    }
     if (showPlanFollowUpPrompt && activeProposedPlan) {
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
@@ -5652,6 +5868,15 @@ function ChatViewContent(props: ChatViewProps) {
     onAddProjectScript: saveProjectScript,
     onUpdateProjectScript: updateProjectScript,
     onDeleteProjectScript: deleteProjectScript,
+    goal: activeThreadGoal,
+    goalAvailability,
+    goalBusy,
+    goalError,
+    onEditGoal: openGoalDialog,
+    onGoalStatusChange: (status) => {
+      void changeThreadGoalStatus(status);
+    },
+    onClearGoal: handleClearThreadGoal,
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
@@ -5748,6 +5973,8 @@ function ChatViewContent(props: ChatViewProps) {
             activeThreadTitle={activeThread.title}
             {...(activeProject ? { activeProjectName: activeProject.title } : {})}
             activeProjectCwd={activeProject?.workspaceRoot ?? null}
+            goal={activeThreadGoal}
+            onOpenGoal={openGoalDialog}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
           />
         </header>
@@ -5924,6 +6151,10 @@ function ChatViewContent(props: ChatViewProps) {
                           providerStatuses={providerStatuses as ServerProvider[]}
                           activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                           activeThreadModelSelection={activeThread?.modelSelection}
+                          enableGoalCommand={canShowThreadGoalComposerCommand({
+                            isMaterializedThread: isServerThread,
+                            provider: selectedProvider,
+                          })}
                           activeThreadVisibleTurnItems={serverVisibleTurnItems}
                           resolvedTheme={resolvedTheme}
                           settings={settings}
@@ -5951,6 +6182,7 @@ function ChatViewContent(props: ChatViewProps) {
                             onChangeActivePendingUserInputCustomAnswer
                           }
                           onProviderModelSelect={onProviderModelSelect}
+                          onOpenGoal={openGoalDialog}
                           getModelDisabledReason={getModelDisabledReason}
                           toggleInteractionMode={toggleInteractionMode}
                           handleRuntimeModeChange={handleRuntimeModeChange}
@@ -6110,6 +6342,16 @@ function ChatViewContent(props: ChatViewProps) {
           </RightPanelTabs>
         </RightPanelSheet>
       ) : null}
+      <ThreadGoalDialog
+        open={goalDialogOpen}
+        goal={activeThreadGoal}
+        available={goalAvailability === "available"}
+        unavailableReason={goalUnavailableReason}
+        busy={goalBusy}
+        error={goalError}
+        onOpenChange={setGoalDialogOpen}
+        onSave={(input) => saveThreadGoal(input)}
+      />
       {expandedImage && (
         <ExpandedImageDialog
           key={`${expandedImage.images[expandedImage.index]?.src ?? "image"}:${expandedImage.index}`}

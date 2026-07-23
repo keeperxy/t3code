@@ -46,6 +46,8 @@ export function makeThreadProjectionFixture(): OrchestrationV2ThreadProjection {
       settledAt: null,
       deletedAt: null,
     },
+    goal: null,
+    goalRevision: null,
     runs: [],
     attempts: [],
     nodes: [],
