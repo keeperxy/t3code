@@ -40,6 +40,7 @@ import { layer as threadManagementServiceLayer } from "./ThreadManagementService
 import { layer as threadLaunchServiceLayer } from "./ThreadLaunchService.ts";
 import { layer as threadLifecycleServiceLayer } from "./ThreadLifecycleService.ts";
 import { layer as threadForkServiceLayer } from "./ThreadForkService.ts";
+import { layer as threadGoalServiceLayer } from "./ThreadGoalService.ts";
 import { layer as turnItemPositionStoreLayer } from "./TurnItemPositionStore.ts";
 import { layer as scheduledTaskServiceLayer } from "../scheduledTasks/ScheduledTaskService.ts";
 
@@ -122,6 +123,19 @@ const providerTurnStartServiceProvided = providerTurnStartServiceLayer.pipe(
 
 const providerTurnControlServiceProvided = providerTurnControlServiceLayer.pipe(
   Layer.provide(Layer.merge(projectionStoreLayer, providerSessionManagerProvided)),
+);
+const threadGoalServiceProvided = threadGoalServiceLayer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      commandReceiptStoreProvided,
+      eventSinkProvided,
+      idAllocatorLayer,
+      projectionStoreLayer,
+      providerAdapterRegistryProvided,
+      providerSessionManagerProvided,
+      runtimePolicyProvided,
+    ),
+  ),
 );
 const runtimeRequestServiceProvided = runtimeRequestServiceLayer.pipe(
   Layer.provide(Layer.merge(projectionStoreLayer, providerSessionManagerProvided)),
@@ -237,6 +251,7 @@ export const OrchestrationV2LayerLive = Layer.mergeAll(
   providerSessionManagerProvided,
   providerRuntimeRecoveryProvided,
   projectionMaintenanceProvided,
+  threadGoalServiceProvided,
 );
 
 export const OrchestrationV2ProductionLayerLive = Layer.mergeAll(
