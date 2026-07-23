@@ -236,11 +236,11 @@ Useful variants:
 ./scripts/start-nightly-web.sh --network-host 192.168.1.20
 ```
 
-The wrapper binds to `0.0.0.0` by default, detects the primary LAN address, and configures the browser
-to use network-reachable Web, HTTP API, and WebSocket URLs. Use the actual LAN or Tailnet address for
-`--network-host` when auto-detection selects the wrong interface. Advanced overrides are available
-through `--web-url`, `--api-url`, and `--port`; other arguments such as `--dry-run` are forwarded to
-`scripts/dev-runner.ts`.
+The wrapper binds to `0.0.0.0` by default, prefers the machine's Tailscale IPv4 address when available,
+falls back to the primary LAN address, and configures the browser to use network-reachable Web, HTTP
+API, and WebSocket URLs. Use the actual LAN or Tailnet address for `--network-host` when auto-detection
+selects the wrong interface. Advanced overrides are available through `--web-url`, `--api-url`, and
+`--port`; other arguments such as `--dry-run` are forwarded to `scripts/dev-runner.ts`.
 
 ## Sync log
 
@@ -339,13 +339,17 @@ through `--web-url`, `--api-url`, and `--port`; other arguments such as `--dry-r
 ### 2026-07-23 - Local Web launcher
 
 - Added `scripts/start-nightly-web.sh` and the `nightly:web` package command.
-- Defaults to all-interface binding, auto-detects the primary LAN address, and keeps persistent
-  branch-local state under `.t3/nightly-main-plus-experimental`.
+- Defaults to all-interface binding, prefers an available Tailscale IPv4 address before falling back to
+  the primary LAN address, and keeps persistent branch-local state under
+  `.t3/nightly-main-plus-experimental`.
 - Supports automatic browser opening, remote binding with an explicit public pairing URL, custom
   state directories, and forwarding of dev-runner options.
 - The dev runner now accepts `--api-url` so remote browsers use network-reachable HTTP and WebSocket
   endpoints instead of their own `localhost`.
-- Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts`, verify LAN-address
+- Network-hosted development clients route cookie-authenticated HTTP requests through the Web origin's
+  Vite proxy while keeping WebSocket traffic on the API port. Wildcard binding also lets the HMR client
+  derive the actual browser host instead of attempting to connect to `0.0.0.0`.
+- Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts`, verify network-address
   detection on the target host, and retain the repository-local `corepack pnpm exec vp` invocation so
   no global `vp` install is required.
 

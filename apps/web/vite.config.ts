@@ -14,6 +14,7 @@ Object.assign(process.env, repoEnv);
 
 const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
+const hmrHost = host === "0.0.0.0" || host === "::" ? undefined : host;
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const configuredRelayUrl = repoEnv.VITE_T3CODE_RELAY_URL?.trim() || "";
 const configuredClerkPublishableKey = repoEnv.VITE_CLERK_PUBLISHABLE_KEY?.trim() || "";
@@ -168,7 +169,7 @@ export default defineConfig(() => {
         // inside Electron's BrowserWindow. Vite 8 uses console.debug for
         // connection logs — enable "Verbose" in DevTools to see them.
         protocol: "ws",
-        host,
+        ...(hmrHost ? { host: hmrHost } : {}),
         clientPort: port,
       },
     },

@@ -192,6 +192,22 @@ describe("environmentBootstrap", () => {
     );
   });
 
+  it("uses the vite proxy for browser descriptor requests on a network host", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://192.168.1.20:5733");
+    vi.stubEnv("VITE_HTTP_URL", "http://192.168.1.20:13773");
+    vi.stubEnv("VITE_WS_URL", "ws://192.168.1.20:13773");
+    installTestBrowser("http://192.168.1.20:5733/");
+    await installDescriptorApi();
+
+    await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
+    expect(resolvePrimaryEnvironmentHttpUrl("/.well-known/t3/environment")).toBe(
+      "http://192.168.1.20:5733/.well-known/t3/environment",
+    );
+    expect(resolvePrimaryEnvironmentHttpUrl("/api/auth/session")).toBe(
+      "http://192.168.1.20:5733/api/auth/session",
+    );
+  });
+
   it("retains the URL parser cause without exposing the configured URL in its message", () => {
     vi.stubEnv("VITE_HTTP_URL", "http://[");
 

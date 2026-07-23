@@ -168,12 +168,15 @@ function resolveHttpRequestBaseUrl(primaryTarget: PrimaryEnvironmentTarget): str
   const isCurrentOriginDevServer =
     (currentUrl.protocol === "http:" || currentUrl.protocol === "https:") &&
     currentUrl.origin === devServerUrl.origin;
+  const isSameHost =
+    normalizeHostname(currentUrl.hostname) === normalizeHostname(targetUrl.hostname);
+  const isLoopbackPair =
+    isLoopbackHostname(currentUrl.hostname) && isLoopbackHostname(targetUrl.hostname);
 
   if (
     !isCurrentOriginDevServer ||
     currentUrl.origin === targetUrl.origin ||
-    !isLoopbackHostname(currentUrl.hostname) ||
-    !isLoopbackHostname(targetUrl.hostname)
+    (!isSameHost && !isLoopbackPair)
   ) {
     return httpBaseUrl;
   }

@@ -17,15 +17,20 @@ extra_args=()
 detect_network_host() {
   local detected=""
 
-  if command -v ip >/dev/null 2>&1; then
+  if command -v tailscale >/dev/null 2>&1; then
+    detected="$(tailscale ip -4 2>/dev/null | awk 'NF { print; exit }' || true)"
+  fi
+
+  if [[ -z "$detected" ]] && command -v ip >/dev/null 2>&1; then
     detected="$(
       ip -4 route get 1.1.1.1 2>/dev/null |
-      awk '{ for (field = 1; field <= NF; field++) if ($field == "src") { print $(field + 1); exit } }'
+      awk '{ for (field = 1; field <= NF; field++) if ($field == "src") { print $(field + 1); exit } }' ||
+      true
     )"
   fi
 
   if [[ -z "$detected" ]] && command -v hostname >/dev/null 2>&1; then
-    detected="$(hostname -I 2>/dev/null | awk '{ print $1 }')"
+    detected="$(hostname -I 2>/dev/null | awk '{ print $1 }' || true)"
   fi
 
   printf '%s' "$detected"
@@ -39,7 +44,7 @@ Start the T3 Code server and Web UI from the current checkout.
 
 Options:
   --host HOST       Bind the server and Web UI to HOST (default: 0.0.0.0).
-  --network-host IP Address clients use to reach this machine (auto-detected).
+  --network-host IP Address clients use to reach this machine (prefers Tailscale).
   --port PORT       Server/API port (default: 13773).
   --home-dir PATH   Store runtime state in PATH.
   --web-url URL     Public Web URL used in the pairing link.
