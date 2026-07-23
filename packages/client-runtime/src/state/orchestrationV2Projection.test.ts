@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -81,6 +82,8 @@ const emptyProjection = {
     settledAt: null,
     deletedAt: null,
   },
+  goal: null,
+  goalRevision: null,
   runs: [],
   attempts: [],
   nodes: [],
@@ -126,6 +129,49 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
     } as OrchestrationV2DomainEvent;
 
     expect(applyOrchestrationV2ProjectionEvent(emptyProjection, event)).toBe(emptyProjection);
+  });
+
+  it("keeps a clear tombstone so stale goal notifications cannot resurrect state", () => {
+    const providerThreadId = ProviderThreadId.make("provider-thread-goal-reducer");
+    const firstUpdatedAt = DateTime.makeUnsafe("2026-06-20T01:00:00.000Z");
+    const clearedAt = DateTime.makeUnsafe("2026-06-20T02:00:00.000Z");
+    const goal = {
+      threadId,
+      providerThreadId,
+      objective: "Keep goal state durable",
+      status: "active" as const,
+      tokenBudget: null,
+      tokensUsed: 100,
+      timeUsedSeconds: 5,
+      createdAt: now,
+      updatedAt: firstUpdatedAt,
+    };
+    const updated = applyOrchestrationV2ProjectionEvent(emptyProjection, {
+      id: "event-goal-update",
+      type: "thread.goal-updated",
+      threadId,
+      occurredAt: firstUpdatedAt,
+      payload: goal,
+    } as OrchestrationV2DomainEvent);
+    const cleared = applyOrchestrationV2ProjectionEvent(updated, {
+      id: "event-goal-clear",
+      type: "thread.goal-cleared",
+      threadId,
+      occurredAt: clearedAt,
+      payload: { providerThreadId, updatedAt: clearedAt },
+    } as OrchestrationV2DomainEvent);
+    const afterStaleUpdate = applyOrchestrationV2ProjectionEvent(cleared, {
+      id: "event-goal-stale-update",
+      type: "thread.goal-updated",
+      threadId,
+      occurredAt: clearedAt,
+      payload: goal,
+    } as OrchestrationV2DomainEvent);
+
+    expect(updated?.goal).toEqual(goal);
+    expect(cleared?.goal).toBeNull();
+    expect(cleared?.goalRevision).toEqual({ providerThreadId, updatedAt: clearedAt });
+    expect(afterStaleUpdate?.goal).toBeNull();
   });
 
   it("preserves visible row identity when run updates do not change membership", () => {

@@ -346,6 +346,17 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               shortDescription: "Debug failing GitHub Actions checks",
             },
           ]);
+          assert.deepStrictEqual(status.slashCommands, [
+            {
+              name: "review",
+              description: "Review current changes and find issues",
+              input: { hint: "optional review instructions" },
+            },
+            {
+              name: "compact",
+              description: "Summarize conversation history to preserve context",
+            },
+          ]);
         }),
       );
 
@@ -459,6 +470,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           assert.strictEqual(status.status, "error");
           assert.strictEqual(status.installed, false);
           assert.strictEqual(status.auth.status, "unknown");
+          assert.deepStrictEqual(status.slashCommands, []);
           assert.strictEqual(
             status.message,
             "Codex CLI (`codex`) is not installed or not on PATH.",

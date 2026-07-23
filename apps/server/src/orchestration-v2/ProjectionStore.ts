@@ -25,6 +25,8 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2SubagentJson as OrchestrationV2SubagentJsonSchema,
+  OrchestrationV2ThreadGoalJson as OrchestrationV2ThreadGoalJsonSchema,
+  OrchestrationV2ThreadGoalRevisionJson as OrchestrationV2ThreadGoalRevisionJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
   RunId,
   ThreadId,
@@ -124,7 +126,7 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
   "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
-export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
+export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 3;
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
   const index = items.findIndex((item) => item.id === next.id);
@@ -142,6 +144,8 @@ export function emptyProjection(
 ): OrchestrationV2ThreadProjection {
   return {
     thread: event.payload,
+    goal: null,
+    goalRevision: null,
     runs: [],
     attempts: [],
     nodes: [],
@@ -192,6 +196,34 @@ export function applyToProjection(
         thread: event.payload,
         updatedAt: event.payload.updatedAt,
       };
+    case "thread.goal-updated":
+      return base.goalRevision !== null &&
+        base.goalRevision.providerThreadId === event.payload.providerThreadId &&
+        DateTime.toEpochMillis(base.goalRevision.updatedAt) >
+          DateTime.toEpochMillis(event.payload.updatedAt)
+        ? base
+        : {
+            ...base,
+            goal: event.payload,
+            goalRevision: {
+              providerThreadId: event.payload.providerThreadId,
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+    case "thread.goal-cleared": {
+      const providerMatches =
+        (base.goal === null || base.goal.providerThreadId === event.payload.providerThreadId) &&
+        (base.goalRevision === null ||
+          base.goalRevision.providerThreadId === event.payload.providerThreadId);
+      const isStale =
+        base.goalRevision !== null &&
+        base.goalRevision.providerThreadId === event.payload.providerThreadId &&
+        DateTime.toEpochMillis(base.goalRevision.updatedAt) >
+          DateTime.toEpochMillis(event.payload.updatedAt);
+      return providerMatches && !isStale
+        ? { ...base, goal: null, goalRevision: event.payload }
+        : base;
+    }
     case "run.created":
     case "run.updated":
       return withLocalVisibleTurnItems({
@@ -424,6 +456,12 @@ const encodeNodePayload = Schema.encodeEffect(
 const encodeSubagentPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
 );
+const encodeThreadGoalPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadGoalJsonSchema),
+);
+const encodeThreadGoalRevisionPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadGoalRevisionJsonSchema),
+);
 const encodeProviderSessionPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
 );
@@ -472,6 +510,12 @@ const decodeNodePayload = Schema.decodeUnknownEffect(
 );
 const decodeSubagentPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2SubagentJsonSchema),
+);
+const decodeThreadGoalPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadGoalJsonSchema),
+);
+const decodeThreadGoalRevisionPayload = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2ThreadGoalRevisionJsonSchema),
 );
 const decodeProviderSessionPayload = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ProviderSessionJsonSchema),
@@ -1042,6 +1086,55 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 archived_at = excluded.archived_at,
                 deleted_at = excluded.deleted_at,
                 payload_json = excluded.payload_json
+            `;
+            break;
+          }
+          case "thread.goal-updated": {
+            const payloadJson = yield* encodeThreadGoalPayload(event.payload);
+            const revisionPayloadJson = yield* encodeThreadGoalRevisionPayload({
+              providerThreadId: event.payload.providerThreadId,
+              updatedAt: event.payload.updatedAt,
+            });
+            const revisionPayload = parseEncodedPayload(revisionPayloadJson);
+            yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET
+                goal_payload_json = ${payloadJson},
+                goal_revision_payload_json = ${revisionPayloadJson}
+              WHERE thread_id = ${event.threadId}
+                AND (
+                  goal_revision_payload_json IS NULL
+                  OR json_extract(goal_revision_payload_json, '$.providerThreadId') !=
+                    ${event.payload.providerThreadId}
+                  OR json_extract(goal_revision_payload_json, '$.updatedAt') <=
+                    ${stringField(revisionPayload, "updatedAt")}
+                )
+            `;
+            break;
+          }
+          case "thread.goal-cleared": {
+            const revisionPayloadJson = yield* encodeThreadGoalRevisionPayload(event.payload);
+            const revisionPayload = parseEncodedPayload(revisionPayloadJson);
+            yield* sql`
+              UPDATE orchestration_v2_projection_threads
+              SET
+                goal_payload_json = NULL,
+                goal_revision_payload_json = ${revisionPayloadJson}
+              WHERE thread_id = ${event.threadId}
+                AND (
+                  goal_payload_json IS NULL
+                  OR json_extract(goal_payload_json, '$.providerThreadId') =
+                    ${event.payload.providerThreadId}
+                )
+                AND (
+                  goal_revision_payload_json IS NULL
+                  OR (
+                    json_extract(goal_revision_payload_json, '$.providerThreadId') =
+                      ${event.payload.providerThreadId}
+                    AND json_extract(goal_revision_payload_json, '$.updatedAt') <=
+                      ${stringField(revisionPayload, "updatedAt")}
+                  )
+                )
             `;
             break;
           }
@@ -1799,8 +1892,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     const readCanonicalProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       Effect.gen(function* () {
-        const threadRows = yield* sql<PayloadRow>`
-          SELECT payload_json
+        const threadRows = yield* sql<
+          PayloadRow & {
+            readonly goal_payload_json: string | null;
+            readonly goal_revision_payload_json: string | null;
+          }
+        >`
+          SELECT payload_json, goal_payload_json, goal_revision_payload_json
           FROM orchestration_v2_projection_threads
           WHERE thread_id = ${threadId}
           LIMIT 1
@@ -1812,6 +1910,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
         const [
           thread,
+          goal,
+          goalRevision,
           runRows,
           attemptRows,
           nodeRows,
@@ -1829,6 +1929,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           contextTransferRows,
         ] = yield* Effect.all([
           decodeThreadPayload(threadRow.payload_json),
+          threadRow.goal_payload_json === null
+            ? Effect.succeed(null)
+            : decodeThreadGoalPayload(threadRow.goal_payload_json),
+          threadRow.goal_revision_payload_json === null
+            ? Effect.succeed(null)
+            : decodeThreadGoalRevisionPayload(threadRow.goal_revision_payload_json),
           sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_runs
@@ -1970,6 +2076,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems);
         const projection = {
           thread,
+          goal,
+          goalRevision,
           runs,
           attempts,
           nodes,

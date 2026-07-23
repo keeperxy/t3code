@@ -38,6 +38,118 @@ const providerInstanceId = modelSelection.instanceId;
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 it.layer(TestLayer)("ProjectionStoreV2", (it) => {
+  it.effect("persists goal updates and rejects stale updates after a clear tombstone", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:projection-goal");
+      const providerThreadId = ProviderThreadId.make("provider-thread:projection-goal");
+      const createdAt = DateTime.makeUnsafe("2026-07-23T08:00:00.000Z");
+      const firstUpdatedAt = DateTime.makeUnsafe("2026-07-23T08:01:00.000Z");
+      const clearedAt = DateTime.makeUnsafe("2026-07-23T08:02:00.000Z");
+      const secondUpdatedAt = DateTime.makeUnsafe("2026-07-23T08:03:00.000Z");
+      const makeGoal = (objective: string, updatedAt: DateTime.Utc) => ({
+        threadId,
+        providerThreadId,
+        objective,
+        status: "active" as const,
+        tokenBudget: 10_000,
+        tokensUsed: 500,
+        timeUsedSeconds: 30,
+        createdAt,
+        updatedAt,
+      });
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: createdAt,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:projection-goal"),
+          title: "Goal projection",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThreadId,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt,
+          updatedAt: createdAt,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:updated"),
+        type: "thread.goal-updated",
+        threadId,
+        occurredAt: firstUpdatedAt,
+        payload: makeGoal("First objective", firstUpdatedAt),
+      });
+
+      const projected = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(projected.goal?.objective, "First objective");
+      assert.deepEqual(projected.goalRevision, { providerThreadId, updatedAt: firstUpdatedAt });
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:stale-clear"),
+        type: "thread.goal-cleared",
+        threadId,
+        occurredAt: firstUpdatedAt,
+        payload: { providerThreadId, updatedAt: createdAt },
+      });
+      assert.equal(
+        (yield* projectionStore.getThreadProjection(threadId)).goal?.objective,
+        "First objective",
+      );
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:clear"),
+        type: "thread.goal-cleared",
+        threadId,
+        occurredAt: clearedAt,
+        payload: { providerThreadId, updatedAt: clearedAt },
+      });
+      const cleared = yield* projectionStore.getThreadProjection(threadId);
+      assert.isNull(cleared.goal);
+      assert.deepEqual(cleared.goalRevision, { providerThreadId, updatedAt: clearedAt });
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:stale-update"),
+        type: "thread.goal-updated",
+        threadId,
+        occurredAt: clearedAt,
+        payload: makeGoal("Stale objective", firstUpdatedAt),
+      });
+      assert.isNull((yield* projectionStore.getThreadProjection(threadId)).goal);
+
+      yield* projectionStore.apply({
+        id: EventId.make("event:projection-goal:new-update"),
+        type: "thread.goal-updated",
+        threadId,
+        occurredAt: secondUpdatedAt,
+        payload: makeGoal("Second objective", secondUpdatedAt),
+      });
+      const current = yield* projectionStore.getThreadProjection(threadId);
+      assert.equal(current.goal?.objective, "Second objective");
+      assert.deepEqual(current.goalRevision, { providerThreadId, updatedAt: secondUpdatedAt });
+      assert.deepEqual(current.runs, []);
+      assert.deepEqual(current.messages, []);
+    }),
+  );
+
   it.effect("projects one shared provider session into multiple thread bindings", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;

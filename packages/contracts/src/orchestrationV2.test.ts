@@ -25,6 +25,7 @@ import {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2Subagent,
+  OrchestrationV2ThreadGoal,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "./orchestrationV2.ts";
@@ -37,6 +38,7 @@ const decodeOrchestrationV2CheckpointScope = Schema.decodeUnknownSync(
 const decodeOrchestrationV2Command = Schema.decodeUnknownSync(OrchestrationV2Command);
 const decodeOrchestrationV2DomainEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
 const decodeOrchestrationV2Subagent = Schema.decodeUnknownSync(OrchestrationV2Subagent);
+const decodeOrchestrationV2ThreadGoal = Schema.decodeUnknownSync(OrchestrationV2ThreadGoal);
 const decodeOrchestrationV2ThreadProjection = Schema.decodeUnknownSync(
   OrchestrationV2ThreadProjection,
 );
@@ -60,6 +62,42 @@ describe("orchestration V2 contracts", () => {
         reason: "user",
       }).type,
     ).toBe("thread.unsettle");
+  });
+
+  it("decodes provider-native goals and durable update/clear events", () => {
+    const goal = decodeOrchestrationV2ThreadGoal({
+      threadId: "thread-1",
+      providerThreadId: "provider-thread-1",
+      objective: "Ship the nightly branch",
+      status: "active",
+      tokenBudget: 50_000,
+      tokensUsed: 1_250,
+      timeUsedSeconds: 42,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const updated = decodeOrchestrationV2DomainEvent({
+      id: "event-goal-updated-1",
+      type: "thread.goal-updated",
+      threadId: "thread-1",
+      occurredAt: now,
+      payload: goal,
+    });
+    const cleared = decodeOrchestrationV2DomainEvent({
+      id: "event-goal-cleared-1",
+      type: "thread.goal-cleared",
+      threadId: "thread-1",
+      occurredAt: now,
+      payload: {
+        providerThreadId: "provider-thread-1",
+        updatedAt: now,
+      },
+    });
+
+    expect(updated.type).toBe("thread.goal-updated");
+    expect(cleared.type).toBe("thread.goal-cleared");
+    expect(goal.status).toBe("active");
+    expect(goal.tokenBudget).toBe(50_000);
   });
 
   it("decodes nested checkpoint scopes without making child scopes advance app run count", () => {
@@ -512,6 +550,8 @@ describe("orchestration V2 contracts", () => {
     expect(projection.turnItems.map((item) => item.type)).toEqual(["command_execution"]);
     expect(projection.thread.settledOverride).toBeNull();
     expect(projection.thread.settledAt).toBeNull();
+    expect(projection.goal).toBeNull();
+    expect(projection.goalRevision).toBeNull();
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {

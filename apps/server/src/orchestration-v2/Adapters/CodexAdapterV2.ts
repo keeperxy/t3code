@@ -35,6 +35,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -105,6 +106,7 @@ export const CODEX_DRIVER_KIND = CODEX_PROVIDER;
 export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER_KIND);
 const DEFAULT_CODEX_SETTINGS = Schema.decodeSync(CodexSettings)({});
 const CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS = 50;
+const CODEX_COMPACT_TURN_STARTED_TIMEOUT = Duration.seconds(30);
 const CODEX_CLIENT_INFO = {
   name: "t3code_desktop",
   title: "T3 Code Desktop",
@@ -113,6 +115,46 @@ const CODEX_CLIENT_INFO = {
 const CODEX_CLIENT_CAPABILITIES = {
   experimentalApi: true,
 } as const;
+
+export type CodexSlashCommand =
+  | {
+      readonly command: "compact";
+    }
+  | {
+      readonly command: "review";
+      readonly instructions?: string;
+    };
+
+/**
+ * Native Codex commands are only recognized when the complete, attachment-free
+ * composer input is the command. Everything else remains a normal user turn.
+ */
+export function parseCodexSlashCommand(input: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<unknown>;
+}): CodexSlashCommand | null {
+  if (input.attachments.length > 0) {
+    return null;
+  }
+
+  const text = input.text.trim();
+  if (text === "/compact") {
+    return { command: "compact" };
+  }
+  if (text === "/review") {
+    return { command: "review" };
+  }
+  if (text.startsWith("/review") && /\s/.test(text.charAt("/review".length))) {
+    const instructions = text.slice("/review".length).trim();
+    return instructions.length > 0
+      ? {
+          command: "review",
+          instructions,
+        }
+      : { command: "review" };
+  }
+  return null;
+}
 
 export const CodexProviderCapabilitiesV2 = {
   sessions: {
@@ -1340,6 +1382,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const pendingRootTurns = yield* Ref.make(new Map<string, ProviderAdapterV2TurnInput>());
+        const compactTurnStartedWaiters = yield* Ref.make(
+          new Map<string, Deferred.Deferred<string, never>>(),
+        );
         const turnWaiters = yield* Ref.make(new Map<string, Deferred.Deferred<void, never>>());
         const subagentThreads = yield* Ref.make(new Map<string, CodexSubagentThreadContext>());
         const pendingSubagentTurns = yield* Ref.make(
@@ -2903,6 +2948,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 updated.delete(payload.threadId);
                 return updated;
               });
+              const compactWaiter = (yield* Ref.get(compactTurnStartedWaiters)).get(
+                payload.threadId,
+              );
+              if (compactWaiter !== undefined) {
+                yield* Deferred.succeed(compactWaiter, payload.turn.id);
+              }
               return;
             }
             yield* rememberSubagentTurnStarted({
@@ -3805,6 +3856,58 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(turnInput.providerThread);
+              const slashCommand = parseCodexSlashCommand(turnInput.message);
+
+              if (slashCommand?.command === "compact") {
+                const waiter = yield* Deferred.make<string, never>();
+                yield* Ref.update(compactTurnStartedWaiters, (current) => {
+                  const updated = new Map(current);
+                  updated.set(threadId, waiter);
+                  return updated;
+                });
+                yield* Ref.update(pendingRootTurns, (current) => {
+                  const updated = new Map(current);
+                  updated.set(threadId, turnInput);
+                  return updated;
+                });
+                yield* client.request("thread/compact/start", { threadId });
+                const nativeTurnId = yield* Deferred.await(waiter).pipe(
+                  Effect.timeoutOption(CODEX_COMPACT_TURN_STARTED_TIMEOUT),
+                );
+                if (Option.isNone(nativeTurnId)) {
+                  return yield* toProtocolError(
+                    `Codex did not emit turn/started for /compact within ${Duration.format(
+                      CODEX_COMPACT_TURN_STARTED_TIMEOUT,
+                    )}.`,
+                  );
+                }
+                return;
+              }
+
+              if (slashCommand?.command === "review") {
+                yield* Ref.update(pendingRootTurns, (current) => {
+                  const updated = new Map(current);
+                  updated.set(threadId, turnInput);
+                  return updated;
+                });
+                const started = yield* client.request("review/start", {
+                  threadId,
+                  delivery: "inline",
+                  target:
+                    slashCommand.instructions === undefined
+                      ? { type: "uncommittedChanges" }
+                      : {
+                          type: "custom",
+                          instructions: slashCommand.instructions,
+                        },
+                });
+                yield* registerRootTurn({
+                  turnInput,
+                  nativeTurnId: started.turn.id,
+                  startedAt: codexTimestamp(started.turn.startedAt),
+                });
+                return;
+              }
 
               const codexInput = yield* toCodexInput(turnInput);
               const turnStartParams = yield* buildCodexTurnStartParams({
@@ -3824,19 +3927,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               const nativeTurnId = started.turn.id;
               const startedAt = codexTimestamp(started.turn.startedAt);
               yield* registerRootTurn({ turnInput, nativeTurnId, startedAt });
-              yield* Ref.update(pendingRootTurns, (current) => {
-                const updated = new Map(current);
-                updated.delete(threadId);
-                return updated;
-              });
             }).pipe(
               Effect.ensuring(
                 Effect.flatMap(getNativeThreadId(turnInput.providerThread), (threadId) =>
-                  Ref.update(pendingRootTurns, (current) => {
-                    const updated = new Map(current);
-                    updated.delete(threadId);
-                    return updated;
-                  }),
+                  Effect.all(
+                    [
+                      Ref.update(pendingRootTurns, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(threadId);
+                        return updated;
+                      }),
+                      Ref.update(compactTurnStartedWaiters, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(threadId);
+                        return updated;
+                      }),
+                    ],
+                    { discard: true },
+                  ),
                 ).pipe(Effect.ignore),
               ),
               Effect.mapError(

@@ -20,6 +20,7 @@ import type {
   ModelCapabilities,
   ProviderOptionDescriptor,
   ServerProviderModel,
+  ServerProviderSlashCommand,
   ServerProviderSkill,
 } from "@t3tools/contracts";
 import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/contracts";
@@ -42,6 +43,18 @@ const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
 } as const;
+
+export const CODEX_APP_SERVER_SLASH_COMMANDS = [
+  {
+    name: "review",
+    description: "Review current changes and find issues",
+    input: { hint: "optional review instructions" },
+  },
+  {
+    name: "compact",
+    description: "Summarize conversation history to preserve context",
+  },
+] satisfies ReadonlyArray<ServerProviderSlashCommand>;
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
@@ -594,6 +607,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     enabled: codexSettings.enabled,
     checkedAt,
     models: snapshot.models,
+    slashCommands: CODEX_APP_SERVER_SLASH_COMMANDS,
     skills: snapshot.skills,
     probe: {
       installed: true,

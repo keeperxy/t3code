@@ -123,6 +123,76 @@ function threadCreatedEvent(input: {
 }
 
 it.layer(TestLayer)("orchestration V2 foundation persistence", (it) => {
+  it.effect("rebuilds the latest goal state and its clear tombstone from durable events", () =>
+    Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const maintenance = yield* ProjectionMaintenanceV2;
+      const threadId = ThreadId.make("thread:foundation-goal-rebuild");
+      const providerThreadId = ProviderThreadId.make("provider-thread:foundation-goal-rebuild");
+      const createdAt = DateTime.makeUnsafe("2026-07-23T09:00:00.000Z");
+      const goalUpdatedAt = DateTime.makeUnsafe("2026-07-23T09:01:00.000Z");
+      const goalClearedAt = DateTime.makeUnsafe("2026-07-23T09:02:00.000Z");
+
+      yield* eventSink.write({
+        events: [
+          threadCreatedEvent({
+            id: "event:foundation-goal-rebuild:thread",
+            thread: {
+              ...makeThread(threadId, createdAt),
+              activeProviderThreadId: providerThreadId,
+            },
+            now: createdAt,
+          }),
+          {
+            id: EventId.make("event:foundation-goal-rebuild:updated"),
+            type: "thread.goal-updated",
+            threadId,
+            providerInstanceId,
+            occurredAt: goalUpdatedAt,
+            payload: {
+              threadId,
+              providerThreadId,
+              objective: "Persist and replay the goal",
+              status: "active",
+              tokenBudget: null,
+              tokensUsed: 25,
+              timeUsedSeconds: 2,
+              createdAt,
+              updatedAt: goalUpdatedAt,
+            },
+          },
+          {
+            id: EventId.make("event:foundation-goal-rebuild:cleared"),
+            type: "thread.goal-cleared",
+            threadId,
+            providerInstanceId,
+            occurredAt: goalClearedAt,
+            payload: {
+              providerThreadId,
+              updatedAt: goalClearedAt,
+            },
+          },
+        ],
+      });
+
+      const beforeRebuild = yield* projectionStore.getThreadProjection(threadId);
+      assert.isNull(beforeRebuild.goal);
+      assert.deepEqual(beforeRebuild.goalRevision, {
+        providerThreadId,
+        updatedAt: goalClearedAt,
+      });
+
+      const rebuilt = yield* maintenance.rebuild;
+      assert.isTrue(rebuilt.valid);
+      const afterRebuild = yield* projectionStore.getThreadProjection(threadId);
+      assert.isNull(afterRebuild.goal);
+      assert.deepEqual(afterRebuild.goalRevision, beforeRebuild.goalRevision);
+      assert.deepEqual(afterRebuild.runs, []);
+      assert.deepEqual(afterRebuild.messages, []);
+    }),
+  );
+
   it.effect("paginates catch-up beyond the event-store read limit", () =>
     Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;

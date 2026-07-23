@@ -74,6 +74,8 @@ function makeProjection(input: {
       settledAt: null,
       deletedAt: null,
     },
+    goal: null,
+    goalRevision: null,
     runs: [],
     attempts: [
       {

@@ -321,6 +321,44 @@ export const OrchestrationV2AppThread = Schema.Struct({
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 
+export const OrchestrationV2ThreadGoalStatus = Schema.Literals([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+]);
+export type OrchestrationV2ThreadGoalStatus = typeof OrchestrationV2ThreadGoalStatus.Type;
+
+/**
+ * Durable app projection of a provider-native thread goal. The app thread id
+ * remains the public identity while providerThreadId records the exact native
+ * conversation the goal belongs to.
+ */
+export const OrchestrationV2ThreadGoal = Schema.Struct({
+  threadId: ThreadId,
+  providerThreadId: ProviderThreadId,
+  objective: TrimmedNonEmptyString,
+  status: OrchestrationV2ThreadGoalStatus,
+  tokenBudget: Schema.NullOr(NonNegativeInt),
+  tokensUsed: NonNegativeInt,
+  timeUsedSeconds: NonNegativeInt,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadGoal = typeof OrchestrationV2ThreadGoal.Type;
+
+/**
+ * Monotonic provider-native goal cursor retained after a goal is cleared. This
+ * prevents an older goal notification from resurrecting cleared state.
+ */
+export const OrchestrationV2ThreadGoalRevision = Schema.Struct({
+  providerThreadId: ProviderThreadId,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadGoalRevision = typeof OrchestrationV2ThreadGoalRevision.Type;
+
 export const OrchestrationV2RunStatus = Schema.Literals([
   "preparing",
   "queued",
@@ -1004,6 +1042,16 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.goal-updated"),
+    payload: OrchestrationV2ThreadGoal,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.goal-cleared"),
+    payload: OrchestrationV2ThreadGoalRevision,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2Run,
   }),
@@ -1107,6 +1155,12 @@ export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
 export const OrchestrationV2ThreadProjection = Schema.Struct({
   thread: OrchestrationV2AppThread,
+  goal: Schema.NullOr(OrchestrationV2ThreadGoal).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  goalRevision: Schema.NullOr(OrchestrationV2ThreadGoalRevision).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   runs: Schema.Array(OrchestrationV2Run),
   attempts: Schema.Array(OrchestrationV2RunAttempt),
   nodes: Schema.Array(OrchestrationV2ExecutionNode),
@@ -1254,6 +1308,22 @@ export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((
   deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
 }));
 export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
+
+export const OrchestrationV2ThreadGoalJson = OrchestrationV2ThreadGoal.mapFields((fields) => ({
+  ...fields,
+  createdAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
+}));
+export type OrchestrationV2ThreadGoalJson = typeof OrchestrationV2ThreadGoalJson.Type;
+
+export const OrchestrationV2ThreadGoalRevisionJson = OrchestrationV2ThreadGoalRevision.mapFields(
+  (fields) => ({
+    ...fields,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ThreadGoalRevisionJson =
+  typeof OrchestrationV2ThreadGoalRevisionJson.Type;
 
 export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
   ...fields,
@@ -1598,6 +1668,16 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.goal-updated"),
+    payload: OrchestrationV2ThreadGoalJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.goal-cleared"),
+    payload: OrchestrationV2ThreadGoalRevisionJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
     type: Schema.Literal("run.created"),
     payload: OrchestrationV2RunJson,
   }),
@@ -1911,10 +1991,40 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getArchivedShellSnapshot: "orchestration.getArchivedShellSnapshot",
   getThreadProjection: "orchestration.getThreadProjection",
   launchThread: "orchestration.launchThread",
+  threadGoalCommand: "orchestration.threadGoalCommand",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
 } as const;
+
+export const OrchestrationV2ThreadGoalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("refresh"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    objective: Schema.optional(TrimmedNonEmptyString),
+    status: Schema.optional(OrchestrationV2ThreadGoalStatus),
+    tokenBudget: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("clear"),
+    commandId: CommandId,
+    threadId: ThreadId,
+  }),
+]);
+export type OrchestrationV2ThreadGoalCommand = typeof OrchestrationV2ThreadGoalCommand.Type;
+
+export const OrchestrationV2ThreadGoalCommandResult = Schema.Struct({
+  sequence: NonNegativeInt,
+  goal: Schema.NullOr(OrchestrationV2ThreadGoal),
+});
+export type OrchestrationV2ThreadGoalCommandResult =
+  typeof OrchestrationV2ThreadGoalCommandResult.Type;
 
 export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   schemaVersion: PositiveInt,
@@ -2093,11 +2203,22 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedErrorClass<Or
   },
 ) {}
 
+export class OrchestrationV2ThreadGoalCommandError extends Schema.TaggedErrorClass<OrchestrationV2ThreadGoalCommandError>()(
+  "OrchestrationV2ThreadGoalCommandError",
+  {
+    commandId: CommandId,
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2ThreadGoalCommandError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -2125,6 +2246,10 @@ export const OrchestrationV2RpcSchemas = {
   launchThread: {
     input: OrchestrationV2ThreadLaunchInput,
     output: OrchestrationV2ThreadLaunchResult,
+  },
+  threadGoalCommand: {
+    input: OrchestrationV2ThreadGoalCommand,
+    output: OrchestrationV2ThreadGoalCommandResult,
   },
   subscribeArchivedShell: {
     input: Schema.Struct({}),

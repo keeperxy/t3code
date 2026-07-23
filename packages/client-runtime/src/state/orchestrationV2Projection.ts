@@ -4,6 +4,7 @@ import type {
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import { isOrchestrationV2TurnItemVisible } from "@t3tools/shared/orchestrationV2Timeline";
+import * as DateTime from "effect/DateTime";
 
 function upsertEntity<T extends { readonly id: unknown }>(
   items: ReadonlyArray<T>,
@@ -109,6 +110,34 @@ export function applyOrchestrationV2ProjectionEvent(
     case "thread.model-selection-updated":
     case "thread.provider-switched":
       return { ...base, thread: event.payload, updatedAt: event.payload.updatedAt };
+    case "thread.goal-updated":
+      return base.goalRevision !== null &&
+        base.goalRevision.providerThreadId === event.payload.providerThreadId &&
+        DateTime.toEpochMillis(base.goalRevision.updatedAt) >
+          DateTime.toEpochMillis(event.payload.updatedAt)
+        ? base
+        : {
+            ...base,
+            goal: event.payload,
+            goalRevision: {
+              providerThreadId: event.payload.providerThreadId,
+              updatedAt: event.payload.updatedAt,
+            },
+          };
+    case "thread.goal-cleared": {
+      const providerMatches =
+        (base.goal === null || base.goal.providerThreadId === event.payload.providerThreadId) &&
+        (base.goalRevision === null ||
+          base.goalRevision.providerThreadId === event.payload.providerThreadId);
+      const isStale =
+        base.goalRevision !== null &&
+        base.goalRevision.providerThreadId === event.payload.providerThreadId &&
+        DateTime.toEpochMillis(base.goalRevision.updatedAt) >
+          DateTime.toEpochMillis(event.payload.updatedAt);
+      return providerMatches && !isStale
+        ? { ...base, goal: null, goalRevision: event.payload }
+        : base;
+    }
     case "run.created":
     case "run.updated": {
       const next = { ...base, runs: upsertEntity(base.runs, event.payload) };

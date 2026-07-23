@@ -26,6 +26,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -55,10 +56,44 @@ import {
   makeCodexAgentMessageDeltaCoalescer,
   makeCodexAppServerProtocolLogger,
   makeCodexAppServerSpawnCommand,
+  parseCodexSlashCommand,
   projectCodexDynamicToolItem,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
+
+describe("parseCodexSlashCommand", () => {
+  it("parses attachment-free native commands", () => {
+    assert.deepEqual(parseCodexSlashCommand({ text: "/compact", attachments: [] }), {
+      command: "compact",
+    });
+    assert.deepEqual(parseCodexSlashCommand({ text: "  /review  ", attachments: [] }), {
+      command: "review",
+    });
+    assert.deepEqual(
+      parseCodexSlashCommand({
+        text: "/review focus on races\nand cleanup",
+        attachments: [],
+      }),
+      {
+        command: "review",
+        instructions: "focus on races\nand cleanup",
+      },
+    );
+  });
+
+  it("leaves partial commands, command-like messages, and attachments as normal turns", () => {
+    assert.isNull(parseCodexSlashCommand({ text: "/compact later", attachments: [] }));
+    assert.isNull(parseCodexSlashCommand({ text: "/reviewer", attachments: [] }));
+    assert.isNull(parseCodexSlashCommand({ text: "please /review", attachments: [] }));
+    assert.isNull(
+      parseCodexSlashCommand({
+        text: "/review",
+        attachments: [{ id: "attachment" }],
+      }),
+    );
+  });
+});
 
 describe("CodexAdapterV2 assistant message streaming", () => {
   it.effect("makes accumulated assistant text visible after the bounded flush interval", () =>
@@ -726,6 +761,47 @@ function codexReplayPreamble(input: {
   readonly prompt: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
+    ...codexReplayThreadPreamble(input.nativeThreadId),
+    {
+      type: "expect_outbound",
+      label: "turn/start",
+      frame: {
+        id: 3,
+        method: "turn/start",
+        params: {
+          threadId: input.nativeThreadId,
+          input: [{ type: "text", text: input.prompt }],
+          cwd: "/workspace",
+          model: "gpt-5.4",
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/start",
+      frame: {
+        id: 3,
+        result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/started",
+      frame: {
+        method: "turn/started",
+        params: {
+          threadId: input.nativeThreadId,
+          turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }),
+        },
+      },
+    },
+  ];
+}
+
+function codexReplayThreadPreamble(
+  nativeThreadId: string,
+): Array<CodexReplay.CodexAppServerReplayEntry> {
+  return [
     {
       type: "expect_outbound",
       label: "initialize",
@@ -764,8 +840,8 @@ function codexReplayPreamble(input: {
         id: 2,
         result: {
           thread: {
-            id: input.nativeThreadId,
-            sessionId: input.nativeThreadId,
+            id: nativeThreadId,
+            sessionId: nativeThreadId,
             forkedFromId: null,
             preview: "",
             ephemeral: false,
@@ -773,7 +849,7 @@ function codexReplayPreamble(input: {
             createdAt: 1782622440,
             updatedAt: 1782622440,
             status: { type: "idle" },
-            path: `/tmp/${input.nativeThreadId}.jsonl`,
+            path: `/tmp/${nativeThreadId}.jsonl`,
             cwd: "/workspace",
             cliVersion: "0.144.0",
             source: "vscode",
@@ -793,39 +869,6 @@ function codexReplayPreamble(input: {
           approvalsReviewer: "user",
           sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
           reasoningEffort: "medium",
-        },
-      },
-    },
-    {
-      type: "expect_outbound",
-      label: "turn/start",
-      frame: {
-        id: 3,
-        method: "turn/start",
-        params: {
-          threadId: input.nativeThreadId,
-          input: [{ type: "text", text: input.prompt }],
-          cwd: "/workspace",
-          model: "gpt-5.4",
-        },
-      },
-    },
-    {
-      type: "emit_inbound",
-      label: "turn/start",
-      frame: {
-        id: 3,
-        result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
-      },
-    },
-    {
-      type: "emit_inbound",
-      label: "turn/started",
-      frame: {
-        method: "turn/started",
-        params: {
-          threadId: input.nativeThreadId,
-          turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }),
         },
       },
     },
@@ -940,6 +983,371 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         hasPendingBackgroundWork,
       };
     });
+
+  describe("native slash commands", () => {
+    const nativeTurnEvents = (
+      events: ReadonlyArray<ProviderAdapterV2Event>,
+      nativeTurnId: string,
+    ) =>
+      events.filter(
+        (event) =>
+          event.type === "provider_turn.updated" &&
+          event.providerTurn.nativeTurnRef?.nativeId === nativeTurnId,
+      );
+
+    it.effect("runs /review with custom instructions and registers a notification-first turn", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-review-command";
+          const nativeThreadId = "native-codex-review-thread";
+          const nativeTurnId = "native-codex-review-turn";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayThreadPreamble(nativeThreadId),
+              {
+                type: "expect_outbound",
+                label: "review/start",
+                frame: {
+                  id: 3,
+                  method: "review/start",
+                  params: {
+                    threadId: nativeThreadId,
+                    delivery: "inline",
+                    target: {
+                      type: "custom",
+                      instructions: "focus on races",
+                    },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/started-before-review-response",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "review/start",
+                frame: {
+                  id: 3,
+                  result: {
+                    reviewThreadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-review-command"),
+              text: "/review focus on races",
+            }),
+          );
+          yield* awaitUntil(
+            () => nativeTurnEvents(harness.events, nativeTurnId).length === 1,
+            "review provider turn",
+          );
+          assert.lengthOf(nativeTurnEvents(harness.events, nativeTurnId), 1);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+
+    it.effect("reviews uncommitted changes when /review has no instructions", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-review-uncommitted-command";
+          const nativeThreadId = "native-codex-review-uncommitted-thread";
+          const nativeTurnId = "native-codex-review-uncommitted-turn";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayThreadPreamble(nativeThreadId),
+              {
+                type: "expect_outbound",
+                label: "review/start",
+                frame: {
+                  id: 3,
+                  method: "review/start",
+                  params: {
+                    threadId: nativeThreadId,
+                    delivery: "inline",
+                    target: { type: "uncommittedChanges" },
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "review/start",
+                frame: {
+                  id: 3,
+                  result: {
+                    reviewThreadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/started-after-review-response",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-review-uncommitted-command"),
+              text: "/review",
+            }),
+          );
+          yield* awaitUntil(
+            () => nativeTurnEvents(harness.events, nativeTurnId).length === 1,
+            "uncommitted review provider turn",
+          );
+          assert.lengthOf(nativeTurnEvents(harness.events, nativeTurnId), 1);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+
+    it.effect("correlates /compact when turn/started races ahead of the empty response", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-compact-command-race";
+          const nativeThreadId = "native-codex-compact-thread";
+          const nativeTurnId = "native-codex-compact-turn";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayThreadPreamble(nativeThreadId),
+              {
+                type: "expect_outbound",
+                label: "thread/compact/start",
+                frame: {
+                  id: 3,
+                  method: "thread/compact/start",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/started-before-compact-response",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/compact/start",
+                frame: {
+                  id: 3,
+                  result: {},
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-compact-command"),
+              text: "/compact",
+            }),
+          );
+          yield* awaitUntil(
+            () => nativeTurnEvents(harness.events, nativeTurnId).length === 1,
+            "compact provider turn",
+          );
+          assert.lengthOf(nativeTurnEvents(harness.events, nativeTurnId), 1);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+
+    it.effect("fails /compact instead of hanging when Codex never emits turn/started", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-compact-command-timeout";
+          const nativeThreadId = "native-codex-compact-timeout-thread";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayThreadPreamble(nativeThreadId),
+              {
+                type: "expect_outbound",
+                label: "thread/compact/start",
+                frame: {
+                  id: 3,
+                  method: "thread/compact/start",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/compact/start",
+                frame: {
+                  id: 3,
+                  result: {},
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+          const start = yield* harness.runtime
+            .startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-codex-compact-timeout"),
+                text: "/compact",
+              }),
+            )
+            .pipe(Effect.forkChild);
+
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("30 seconds");
+          const exit = yield* Fiber.await(start);
+          assert.equal(exit._tag, "Failure");
+          assert.match(String(exit), /did not emit turn\/started for \/compact/);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+
+    it.effect("cleans failed /compact correlation before a later normal turn", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const scenario = "codex-compact-command-cleanup";
+          const nativeThreadId = "native-codex-compact-cleanup-thread";
+          const nativeTurnId = "native-codex-after-compact-failure-turn";
+          const normalPrompt = "continue normally";
+          const transcript = makeCodexReplayTranscript({
+            scenario,
+            entries: [
+              ...codexReplayThreadPreamble(nativeThreadId),
+              {
+                type: "expect_outbound",
+                label: "thread/compact/start",
+                frame: {
+                  id: 3,
+                  method: "thread/compact/start",
+                  params: { threadId: nativeThreadId },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/compact/start-error",
+                frame: {
+                  id: 3,
+                  error: {
+                    code: -32603,
+                    message: "compaction unavailable",
+                  },
+                },
+              },
+              {
+                type: "expect_outbound",
+                label: "turn/start-after-compact-error",
+                frame: {
+                  id: 4,
+                  method: "turn/start",
+                  params: {
+                    threadId: nativeThreadId,
+                    input: [{ type: "text", text: normalPrompt }],
+                    cwd: "/workspace",
+                    model: "gpt-5.4",
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/start-after-compact-error",
+                frame: {
+                  id: 4,
+                  result: {
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "turn/started-after-compact-error",
+                frame: {
+                  method: "turn/started",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "inProgress" }),
+                  },
+                },
+              },
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript);
+          const now = yield* DateTime.now;
+
+          const failedCompact = yield* harness.runtime
+            .startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-codex-compact-error"),
+                text: "/compact",
+              }),
+            )
+            .pipe(Effect.exit);
+          assert.equal(failedCompact._tag, "Failure");
+
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-after-compact-error"),
+              text: normalPrompt,
+            }),
+          );
+          yield* awaitUntil(
+            () => nativeTurnEvents(harness.events, nativeTurnId).length === 1,
+            "normal provider turn after compact failure",
+          );
+          assert.lengthOf(nativeTurnEvents(harness.events, nativeTurnId), 1);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+  });
 
   const BG_SCENARIO = "codex-bg-exec-wake";
   const BG_NATIVE_THREAD = "native-codex-bg-thread";
