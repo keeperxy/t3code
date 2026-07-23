@@ -213,6 +213,34 @@ The first publication establishes a buildable branch, not a production release c
   therefore requires an explicit fork-level workflow/default-branch decision; it is not silently
   enabled by this integration branch.
 
+## Local Web launcher
+
+Use the checked-in wrapper to start the server and Web UI together:
+
+```sh
+./scripts/start-nightly-web.sh
+```
+
+The default state directory is `.t3/nightly-main-plus-experimental`, so restarts reuse pairing,
+projects, threads, goals, and schedules without touching the normal user-level T3 state. The wrapper
+uses the repository-local Vite+ binary through Corepack, auto-bootstraps this checkout as a project,
+and prints the complete first-start pairing URL.
+
+Useful variants:
+
+```sh
+# Open the system browser automatically.
+./scripts/start-nightly-web.sh --open-browser
+
+# Make the Web UI reachable from another machine.
+./scripts/start-nightly-web.sh \
+  --host 0.0.0.0 \
+  --web-url http://192.168.1.20:5733
+```
+
+Use the actual host name, LAN address, or Tailnet address for `--web-url`. The wrapper forwards
+additional arguments such as `--dry-run` or `--port` to `scripts/dev-runner.ts`.
+
 ## Sync log
 
 ### 2026-07-23 - Initial integration
@@ -306,6 +334,16 @@ The first publication establishes a buildable branch, not a production release c
   `b44ed835c63caafae619e303ca019a251c2698b2`; no additional merge was required.
 - Publication: created `fork/nightly/main-plus-experimental` without force-push, set it as the local
   upstream, and verified the final remote ref against local `HEAD`.
+
+### 2026-07-23 - Local Web launcher
+
+- Added `scripts/start-nightly-web.sh` and the `nightly:web` package command.
+- Defaults to loopback binding and persistent branch-local state under
+  `.t3/nightly-main-plus-experimental`.
+- Supports automatic browser opening, remote binding with an explicit public pairing URL, custom
+  state directories, and forwarding of dev-runner options.
+- Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts` and retain the
+  repository-local `corepack pnpm exec vp` invocation so no global `vp` install is required.
 
 ## Completion and retirement rules
 
