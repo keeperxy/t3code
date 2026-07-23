@@ -1,4 +1,7 @@
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import {
+  threadRuntimeIsActive,
+  type EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import { canSettle } from "@t3tools/client-runtime/state/thread-settled";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -97,8 +100,9 @@ function useThreadActionExecutor(
         // thread mid-turn.
         if (
           action === "archive" &&
-          thread.session?.status === "running" &&
-          thread.session.activeTurnId != null
+          thread.runtime !== null &&
+          threadRuntimeIsActive(thread.runtime) &&
+          thread.runtime.activeRunId !== null
         ) {
           Alert.alert(
             actionFailureTitle(action),

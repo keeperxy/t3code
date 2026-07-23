@@ -1,7 +1,15 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2RunStatus,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { makeThreadShellFixture } from "../../test-fixtures";
 import {
   buildThreadListV2Items,
   resolveThreadListV2Status,
@@ -13,49 +21,71 @@ const environmentId = EnvironmentId.make("environment-1");
 function makeThread(
   input: Partial<EnvironmentThreadShell> & Pick<EnvironmentThreadShell, "id" | "title">,
 ): EnvironmentThreadShell {
-  return {
+  return makeThreadShellFixture({
     environmentId,
     projectId: ProjectId.make("project-1"),
-    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-    runtimeMode: "full-access",
-    interactionMode: "default",
-    branch: null,
-    worktreePath: null,
-    latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
-    archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
-    session: null,
-    latestUserMessageAt: null,
-    hasPendingApprovals: false,
-    hasPendingUserInput: false,
-    hasActionableProposedPlan: false,
     ...input,
-  };
+  });
 }
 
 const NOW = "2026-06-02T00:00:00.000Z";
 
+function makeRuntime(status: OrchestrationV2RunStatus) {
+  return {
+    status,
+    activeRunId:
+      status === "preparing" ||
+      status === "queued" ||
+      status === "starting" ||
+      status === "running" ||
+      status === "waiting"
+        ? RunId.make("run-active")
+        : null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: status === "failed" ? "Provider failed" : null,
+    updatedAt: NOW,
+  };
+}
+
 describe("resolveThreadListV2Status", () => {
-  it("prioritizes approval over a running session", () => {
+  it("prioritizes approval over an active V2 runtime", () => {
     const thread = makeThread({
       id: ThreadId.make("t"),
       title: "t",
       hasPendingApprovals: true,
-      session: {
-        threadId: ThreadId.make("t"),
-        status: "running",
-        providerName: "Codex",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        runtimeMode: "full-access",
-        activeTurnId: null,
-        lastError: null,
-        updatedAt: NOW,
-      },
+      runtime: makeRuntime("running"),
     });
     expect(resolveThreadListV2Status(thread)).toBe("approval");
+  });
+
+  it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
+    "resolves %s V2 runtime as working",
+    (status) => {
+      expect(
+        resolveThreadListV2Status(
+          makeThread({
+            id: ThreadId.make(`thread-${status}`),
+            title: status,
+            runtime: makeRuntime(status),
+          }),
+        ),
+      ).toBe("working");
+    },
+  );
+
+  it("resolves a failed V2 runtime as failed", () => {
+    expect(
+      resolveThreadListV2Status(
+        makeThread({
+          id: ThreadId.make("thread-failed"),
+          title: "Failed",
+          runtime: makeRuntime("failed"),
+        }),
+      ),
+    ).toBe("failed");
   });
 
   it("resolves ready for quiescent threads", () => {
@@ -186,11 +216,9 @@ describe("buildThreadListV2Items settled paging", () => {
           settledOverride: "settled",
           settledAt: NOW,
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
-          // A turn adopted the message (same requestedAt): without it the
-          // thread reads as a queued turn start, which never settles.
-          latestTurn: {
-            turnId: TurnId.make(`turn-${index}`),
-            state: "completed",
+          latestRun: {
+            runId: RunId.make(`run-${index}`),
+            status: "completed",
             requestedAt: `2026-06-01T0${index}:00:00.000Z`,
             startedAt: `2026-06-01T0${index}:00:00.000Z`,
             completedAt: `2026-06-01T0${index}:10:00.000Z`,

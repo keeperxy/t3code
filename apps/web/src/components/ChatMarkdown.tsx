@@ -19,12 +19,14 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
+  createContext,
   Suspense,
   type ClipboardEvent as ReactClipboardEvent,
   type MouseEvent as ReactMouseEvent,
   isValidElement,
   use,
   useCallback,
+  useContext,
   memo,
   useEffect,
   useMemo,
@@ -1241,6 +1243,266 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
+interface ChatMarkdownComponentContextValue {
+  readonly text: string;
+  readonly skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readonly onTaskListChange:
+    | ((input: { markerOffset: number; checked: boolean }) => void)
+    | undefined;
+  readonly markdownFileLinkMetaByHref: ReadonlyMap<
+    string,
+    NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
+  >;
+  readonly fileLinkParentSuffixByPath: ReadonlyMap<string, string>;
+  readonly threadRef: ScopedThreadRef | undefined;
+  readonly resolvedTheme: "light" | "dark";
+  readonly openInPreferredEditor: MarkdownFileLinkProps["onOpen"];
+  readonly openExternalLinkInPreview: (url: string) => ReturnType<typeof openUrlInPreview>;
+  readonly openMarkdownFileInPreview: (path: string) => ReturnType<typeof openFileInPreview>;
+  readonly diffThemeName: DiffThemeName;
+  readonly isStreaming: boolean;
+}
+
+const ChatMarkdownComponentContext = createContext<ChatMarkdownComponentContextValue | null>(null);
+
+function useChatMarkdownComponentContext(): ChatMarkdownComponentContextValue {
+  const context = useContext(ChatMarkdownComponentContext);
+  if (!context) {
+    throw new Error("ChatMarkdown components must be rendered within ChatMarkdown.");
+  }
+  return context;
+}
+
+const MarkdownParagraphComponent: NonNullable<Components["p"]> =
+  function MarkdownParagraphComponent({ node: _node, children, ...props }) {
+    const { skills } = useChatMarkdownComponentContext();
+    return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
+  };
+
+const MarkdownListItemComponent: NonNullable<Components["li"]> =
+  function MarkdownListItemComponent({ node, children, ...props }) {
+    const { skills, text } = useChatMarkdownComponentContext();
+    const listItemStart = node?.position?.start.offset;
+    const markerOffset =
+      typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
+    return (
+      <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
+        {renderSkillInlineMarkdownChildren(children, skills)}
+      </li>
+    );
+  };
+
+const MarkdownInputComponent: NonNullable<Components["input"]> = function MarkdownInputComponent({
+  node: _node,
+  type,
+  checked,
+  disabled: _disabled,
+  ...props
+}) {
+  const { onTaskListChange } = useChatMarkdownComponentContext();
+  if (type !== "checkbox" || !onTaskListChange) {
+    return (
+      <input
+        {...props}
+        type={type}
+        checked={checked}
+        disabled={_disabled}
+        readOnly={type === "checkbox"}
+      />
+    );
+  }
+  return (
+    <input
+      {...props}
+      type="checkbox"
+      name="markdown-task"
+      aria-label="Toggle task"
+      checked={checked}
+      onChange={(event) => {
+        const markerOffset = Number(event.currentTarget.closest("li")?.dataset.taskMarkerOffset);
+        if (!Number.isSafeInteger(markerOffset)) return;
+        onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
+      }}
+    />
+  );
+};
+
+const MarkdownAnchorComponent: NonNullable<Components["a"]> = function MarkdownAnchorComponent({
+  node,
+  href,
+  children,
+  ...props
+}) {
+  const {
+    fileLinkParentSuffixByPath,
+    markdownFileLinkMetaByHref,
+    openExternalLinkInPreview,
+    openInPreferredEditor,
+    openMarkdownFileInPreview,
+    resolvedTheme,
+    threadRef,
+  } = useChatMarkdownComponentContext();
+  const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+  const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+  if (!fileLinkMeta) {
+    const faviconHost = resolveExternalWebLinkHost(href);
+    const isSameDocumentLink = href?.startsWith("#") ?? false;
+    const onClick = props.onClick;
+    const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
+    const link = (
+      <a
+        {...props}
+        href={href}
+        target={isSameDocumentLink ? undefined : "_blank"}
+        rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
+        onClick={(event) => {
+          onClick?.(event);
+          if (isSameDocumentLink && href) {
+            handleMarkdownFragmentClick(event, href);
+          }
+        }}
+        onContextMenu={(event) => {
+          if (!canOpenInPreview || !href || !faviconHost) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const api = readLocalApi();
+          if (!api) return;
+          void showExternalLinkContextMenu({
+            href,
+            position: { x: event.clientX, y: event.clientY },
+            showContextMenu: (items, position) => api.contextMenu.show(items, position),
+            openInPreview: async (target) => {
+              const result = await openExternalLinkInPreview(target);
+              if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+                reportMarkdownActionFailure(
+                  { operation: "open-link-in-preview", target },
+                  result.cause,
+                );
+              }
+            },
+            openExternal: (target) => api.shell.openExternal(target),
+            copyLink: (target) => writeTextToClipboard(target, "link"),
+            reportFailure: (operation, cause) => {
+              reportMarkdownActionFailure({ operation, target: href }, cause);
+            },
+          });
+        }}
+      >
+        {faviconHost ? (
+          <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
+            {children}
+          </MarkdownExternalLinkContent>
+        ) : (
+          children
+        )}
+      </a>
+    );
+    if (!faviconHost || !href) {
+      return link;
+    }
+    return (
+      <Tooltip>
+        <TooltipTrigger render={link} />
+        <TooltipPopup
+          side="top"
+          className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
+        >
+          {href}
+        </TooltipPopup>
+      </Tooltip>
+    );
+  }
+
+  const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+  const labelParts = [fileLinkMeta.basename];
+  if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
+    labelParts.push(parentSuffix);
+  }
+  if (fileLinkMeta.line) {
+    labelParts.push(
+      `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+    );
+  }
+
+  return (
+    <MarkdownFileLink
+      href={fileLinkMeta.targetPath}
+      targetPath={fileLinkMeta.targetPath}
+      iconPath={fileLinkMeta.filePath}
+      displayPath={fileLinkMeta.displayPath}
+      workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
+      line={fileLinkMeta.line}
+      label={labelParts.join(" · ")}
+      copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
+      theme={resolvedTheme}
+      threadRef={threadRef}
+      onOpen={openInPreferredEditor}
+      onOpenInBrowser={
+        threadRef && isPreviewSupportedInRuntime() && isBrowserPreviewFile(fileLinkMeta.filePath)
+          ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
+          : undefined
+      }
+      className={props.className}
+    />
+  );
+};
+
+const MarkdownTableComponent: NonNullable<Components["table"]> = function MarkdownTableComponent({
+  node: _node,
+  ...props
+}) {
+  return <MarkdownTable {...props} />;
+};
+
+const MarkdownDetailsComponent: NonNullable<Components["details"]> =
+  function MarkdownDetailsComponent({ node: _node, children, open }) {
+    return <MarkdownDetails open={open}>{children}</MarkdownDetails>;
+  };
+
+const MarkdownPreComponent: NonNullable<Components["pre"]> = function MarkdownPreComponent({
+  node,
+  children,
+  ...props
+}) {
+  const { diffThemeName, isStreaming, resolvedTheme } = useChatMarkdownComponentContext();
+  const codeBlock = extractCodeBlock(children);
+  if (!codeBlock) {
+    return <pre {...props}>{children}</pre>;
+  }
+
+  const language = extractFenceLanguage(codeBlock.className);
+  const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
+  return (
+    <MarkdownCodeBlock
+      code={codeBlock.code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={resolvedTheme}
+    >
+      <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
+        <Suspense fallback={<pre {...props}>{children}</pre>}>
+          <SuspenseShikiCodeBlock
+            className={codeBlock.className}
+            code={codeBlock.code}
+            themeName={diffThemeName}
+            isStreaming={isStreaming}
+          />
+        </Suspense>
+      </CodeHighlightErrorBoundary>
+    </MarkdownCodeBlock>
+  );
+};
+
+const CHAT_MARKDOWN_COMPONENTS: Components = {
+  p: MarkdownParagraphComponent,
+  li: MarkdownListItemComponent,
+  input: MarkdownInputComponent,
+  a: MarkdownAnchorComponent,
+  table: MarkdownTableComponent,
+  details: MarkdownDetailsComponent,
+  pre: MarkdownPreComponent,
+};
+
 function ChatMarkdown({
   text,
   cwd,
@@ -1339,191 +1601,20 @@ function ChatMarkdown({
     },
     [createAssetUrl, openPreview, preparedConnection, threadRef],
   );
-  const markdownComponents = useMemo<Components>(
+  const componentContextValue = useMemo<ChatMarkdownComponentContextValue>(
     () => ({
-      p({ node: _node, children, ...props }) {
-        return <p {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</p>;
-      },
-      li({ node, children, ...props }) {
-        const listItemStart = node?.position?.start.offset;
-        const markerOffset =
-          typeof listItemStart === "number" ? findTaskListMarkerOffset(text, listItemStart) : null;
-        return (
-          <li {...props} data-task-marker-offset={markerOffset ?? undefined}>
-            {renderSkillInlineMarkdownChildren(children, skills)}
-          </li>
-        );
-      },
-      input({ node: _node, type, checked, disabled: _disabled, ...props }) {
-        if (type !== "checkbox" || !onTaskListChange) {
-          return (
-            <input
-              {...props}
-              type={type}
-              checked={checked}
-              disabled={_disabled}
-              readOnly={type === "checkbox"}
-            />
-          );
-        }
-        return (
-          <input
-            {...props}
-            type="checkbox"
-            name="markdown-task"
-            aria-label="Toggle task"
-            checked={checked}
-            onChange={(event) => {
-              const markerOffset = Number(
-                event.currentTarget.closest("li")?.dataset.taskMarkerOffset,
-              );
-              if (!Number.isSafeInteger(markerOffset)) return;
-              onTaskListChange({ markerOffset, checked: event.currentTarget.checked });
-            }}
-          />
-        );
-      },
-      a({ node, href, children, ...props }) {
-        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
-        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
-        if (!fileLinkMeta) {
-          const faviconHost = resolveExternalWebLinkHost(href);
-          const isSameDocumentLink = href?.startsWith("#") ?? false;
-          const onClick = props.onClick;
-          const canOpenInPreview = Boolean(threadRef) && isPreviewSupportedInRuntime();
-          const link = (
-            <a
-              {...props}
-              href={href}
-              target={isSameDocumentLink ? undefined : "_blank"}
-              rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
-              onClick={(event) => {
-                onClick?.(event);
-                if (isSameDocumentLink && href) {
-                  handleMarkdownFragmentClick(event, href);
-                }
-              }}
-              onContextMenu={(event) => {
-                if (!canOpenInPreview || !href || !faviconHost) return;
-                event.preventDefault();
-                event.stopPropagation();
-                const api = readLocalApi();
-                if (!api) return;
-                void showExternalLinkContextMenu({
-                  href,
-                  position: { x: event.clientX, y: event.clientY },
-                  showContextMenu: (items, position) => api.contextMenu.show(items, position),
-                  openInPreview: async (target) => {
-                    const result = await openExternalLinkInPreview(target);
-                    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-                      reportMarkdownActionFailure(
-                        { operation: "open-link-in-preview", target },
-                        result.cause,
-                      );
-                    }
-                  },
-                  openExternal: (target) => api.shell.openExternal(target),
-                  copyLink: (target) => writeTextToClipboard(target, "link"),
-                  reportFailure: (operation, cause) => {
-                    reportMarkdownActionFailure({ operation, target: href }, cause);
-                  },
-                });
-              }}
-            >
-              {faviconHost ? (
-                <MarkdownExternalLinkContent host={faviconHost} plainText={plainHastText(node)}>
-                  {children}
-                </MarkdownExternalLinkContent>
-              ) : (
-                children
-              )}
-            </a>
-          );
-          if (!faviconHost || !href) {
-            return link;
-          }
-          return (
-            <Tooltip>
-              <TooltipTrigger render={link} />
-              <TooltipPopup
-                side="top"
-                className="max-w-[min(36rem,calc(100vw-2rem))] whitespace-normal leading-tight wrap-anywhere"
-              >
-                {href}
-              </TooltipPopup>
-            </Tooltip>
-          );
-        }
-
-        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
-        const labelParts = [fileLinkMeta.basename];
-        if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
-          labelParts.push(parentSuffix);
-        }
-        if (fileLinkMeta.line) {
-          labelParts.push(
-            `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
-          );
-        }
-
-        return (
-          <MarkdownFileLink
-            href={fileLinkMeta.targetPath}
-            targetPath={fileLinkMeta.targetPath}
-            iconPath={fileLinkMeta.filePath}
-            displayPath={fileLinkMeta.displayPath}
-            workspaceRelativePath={fileLinkMeta.workspaceRelativePath}
-            line={fileLinkMeta.line}
-            label={labelParts.join(" · ")}
-            copyMarkdown={`[${fileLinkMeta.basename}](${normalizedHref})`}
-            theme={resolvedTheme}
-            threadRef={threadRef}
-            onOpen={openInPreferredEditor}
-            onOpenInBrowser={
-              threadRef &&
-              isPreviewSupportedInRuntime() &&
-              isBrowserPreviewFile(fileLinkMeta.filePath)
-                ? () => openMarkdownFileInPreview(fileLinkMeta.filePath)
-                : undefined
-            }
-            className={props.className}
-          />
-        );
-      },
-      table({ node: _node, ...props }) {
-        return <MarkdownTable {...props} />;
-      },
-      details({ node: _node, children, open: detailsOpen }) {
-        return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
-      },
-      pre({ node, children, ...props }) {
-        const codeBlock = extractCodeBlock(children);
-        if (!codeBlock) {
-          return <pre {...props}>{children}</pre>;
-        }
-
-        const language = extractFenceLanguage(codeBlock.className);
-        const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
-        return (
-          <MarkdownCodeBlock
-            code={codeBlock.code}
-            language={language}
-            fenceTitle={fenceTitle}
-            theme={resolvedTheme}
-          >
-            <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
-              <Suspense fallback={<pre {...props}>{children}</pre>}>
-                <SuspenseShikiCodeBlock
-                  className={codeBlock.className}
-                  code={codeBlock.code}
-                  themeName={diffThemeName}
-                  isStreaming={isStreaming}
-                />
-              </Suspense>
-            </CodeHighlightErrorBoundary>
-          </MarkdownCodeBlock>
-        );
-      },
+      diffThemeName,
+      fileLinkParentSuffixByPath,
+      isStreaming,
+      markdownFileLinkMetaByHref,
+      onTaskListChange,
+      openExternalLinkInPreview,
+      openInPreferredEditor,
+      openMarkdownFileInPreview,
+      resolvedTheme,
+      skills,
+      text,
+      threadRef,
     }),
     [
       diffThemeName,
@@ -1531,8 +1622,8 @@ function ChatMarkdown({
       isStreaming,
       markdownFileLinkMetaByHref,
       onTaskListChange,
-      openInPreferredEditor,
       openExternalLinkInPreview,
+      openInPreferredEditor,
       openMarkdownFileInPreview,
       resolvedTheme,
       skills,
@@ -1549,16 +1640,18 @@ function ChatMarkdown({
       )}
       onCopy={handleCopy}
     >
-      <ReactMarkdown
-        remarkPlugins={
-          lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
-        }
-        rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
-        components={markdownComponents}
-        urlTransform={markdownUrlTransform}
-      >
-        {text}
-      </ReactMarkdown>
+      <ChatMarkdownComponentContext value={componentContextValue}>
+        <ReactMarkdown
+          remarkPlugins={
+            lineBreaks ? CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS : CHAT_MARKDOWN_REMARK_PLUGINS
+          }
+          rehypePlugins={CHAT_MARKDOWN_REHYPE_PLUGINS}
+          components={CHAT_MARKDOWN_COMPONENTS}
+          urlTransform={markdownUrlTransform}
+        >
+          {text}
+        </ReactMarkdown>
+      </ChatMarkdownComponentContext>
     </div>
   );
 }

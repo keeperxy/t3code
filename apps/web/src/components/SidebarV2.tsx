@@ -218,16 +218,16 @@ function SidebarV2ThreadTooltip({
             <div className="flex min-w-0 items-start gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
-                displayName={thread.session?.providerName ?? modelInstanceId}
+                displayName={thread.runtime?.providerName ?? modelInstanceId}
                 iconClassName="size-4 shrink-0"
               />
               <div className="min-w-0 flex-1 wrap-break-word text-foreground/90">{modelLabel}</div>
             </div>
           ) : null}
-          {thread.session?.lastError ? (
+          {thread.runtime?.lastError ? (
             <div className="flex min-w-0 items-start gap-2 text-red-600 dark:text-red-400">
               <CircleAlertIcon className="size-4 shrink-0 stroke-current" />
-              <div className="min-w-0 flex-1 wrap-break-word">{thread.session.lastError}</div>
+              <div className="min-w-0 flex-1 wrap-break-word">{thread.runtime.lastError}</div>
             </div>
           ) : null}
         </div>
@@ -361,7 +361,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     onChangeRequestState(threadKey, prState);
   }, [onChangeRequestState, prState, threadKey]);
 
-  const modelInstanceId = thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+  const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
   const driverKind = providerEntry?.driverKind ?? null;
   const selectedModel = providerEntry?.models.find(
@@ -623,7 +623,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
     );
   }
 
-  const diff = latestTurnDiff(thread);
+  const diff = latestRunDiff(thread);
 
   return (
     <li
@@ -722,7 +722,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
                   <span className="inline-flex shrink-0 items-center opacity-60">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
-                      displayName={thread.session?.providerName ?? modelInstanceId}
+                      displayName={thread.runtime?.providerName ?? modelInstanceId}
                       iconClassName="size-4"
                     />
                   </span>
@@ -737,7 +737,7 @@ const SidebarV2Row = memo(function SidebarV2Row(props: {
   );
 });
 
-function latestTurnDiff(
+function latestRunDiff(
   thread: SidebarThreadSummary,
 ): { insertions: number; deletions: number } | null {
   // Shells don't carry checkpoint summaries; diff stats render only when the
@@ -1006,7 +1006,7 @@ export default function SidebarV2() {
 
   // Settled threads are live shells, so opening one is plain navigation:
   // history stays readable without un-settling, and sending a message or
-  // starting a session un-settles server-side.
+  // starting a run un-settles server-side.
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
       if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
@@ -1209,7 +1209,7 @@ export default function SidebarV2() {
       if (clicked.value === "mark-unread") {
         for (const threadKey of threadKeys) {
           const thread = threadByKeyRef.current.get(threadKey);
-          markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
+          markThreadUnread(threadKey, thread?.latestRun?.completedAt);
         }
         clearSelection();
         return;
@@ -1314,7 +1314,7 @@ export default function SidebarV2() {
             startThreadRename(threadRef, thread.title);
             return;
           case "mark-unread":
-            markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            markThreadUnread(threadKey, thread.latestRun?.completedAt);
             return;
           case "delete": {
             if (confirmThreadDelete) {
