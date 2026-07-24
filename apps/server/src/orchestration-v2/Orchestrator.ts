@@ -212,11 +212,14 @@ const WORKSPACE_PREPARATION_INPUT = "Preparing workspace";
 function isBlockingRun(run: OrchestrationV2Run): boolean {
   return (
     run.status === "preparing" ||
-    run.status === "queued" ||
     run.status === "starting" ||
     run.status === "running" ||
     run.status === "waiting"
   );
+}
+
+function preventsThreadSettlement(run: OrchestrationV2Run): boolean {
+  return run.status === "queued" || isBlockingRun(run);
 }
 
 function delegatedTaskTerminalStatus(
@@ -871,7 +874,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (command.type === "thread.settle") {
-        if (projection.runs.some(isBlockingRun)) {
+        if (projection.runs.some(preventsThreadSettlement)) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
