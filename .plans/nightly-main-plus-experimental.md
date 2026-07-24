@@ -2,7 +2,7 @@
 
 Status: DONE
 
-Last updated: 2026-07-23
+Last updated: 2026-07-24
 
 ## Purpose and branch contract
 
@@ -22,12 +22,12 @@ upstream work before it reaches `pingdotgg/t3code:main`.
 
 | Source | Integrated ref | Last checked | State |
 | --- | --- | --- | --- |
-| `origin/main` | `b44ed835c63caafae619e303ca019a251c2698b2` | 2026-07-23 | Integrated by `67541df53` |
-| Integration branch | `4e03d417b` | 2026-07-23 | Requested feature implementation complete |
-| PR #2829 | `f30673fea7df138fc210fbab4288fb03aaa96142` | 2026-07-23 | Draft, conflicting upstream; integrated by `c056279e2` |
-| PR #3558 | `21bf9696b29117c90e18f05bd8043c8fed5d9c9c` | 2026-07-23 | Closed without merge; V2-native replacement integrated |
-| PR #3638 | merge commit `dac514e6b6237c07e9ab3c5415e97472a96926b2` | 2026-07-23 | Integrated through PR #2829; not present on upstream `main` |
-| Issue #3164 | open | 2026-07-23 | Cron/prompt MVP integrated; external event triggers remain upstream scope |
+| `origin/main` | `bb38c3320d0a4eec4e9097fdc400970d881ff559` | 2026-07-24 | Integrated by `631809152` |
+| Integration branch | `38f1cdc26e82fc1752270426ca7fc6c9f95d2776` | 2026-07-24 | Current compatibility implementation and Apple build source |
+| PR #2829 | `7732874f501e48f74b19866c95a086af7b1ee6ad` | 2026-07-24 | Draft, conflicting upstream; refreshed by `4fc842fc0` |
+| PR #3558 | `21bf9696b29117c90e18f05bd8043c8fed5d9c9c` | 2026-07-24 | Closed without merge; V2-native replacement integrated |
+| PR #3638 | merge commit `dac514e6b6237c07e9ab3c5415e97472a96926b2` | 2026-07-24 | Integrated through PR #2829; not present on upstream `main` |
+| Issue #3164 | open | 2026-07-24 | Cron/prompt MVP integrated; external event triggers remain upstream scope |
 
 The implementation, first-publication verification, and remote publication are complete.
 `fork/nightly/main-plus-experimental` is the durable integration ref.
@@ -125,7 +125,8 @@ The implementation, first-publication verification, and remote publication are c
 
 ## Compatibility decisions from the first integration
 
-1. Main migration 33 (`ProjectionThreadsSettled`) remains immutable. The PR #2829 migrations that
+1. Main migration 33 (`ProjectionThreadsSettled`) remains immutable. Its source filename is
+   `041_ProjectionThreadsSettled.ts`, but the registry ID remains 33. The PR #2829 migrations that
    originally used IDs 33 through 40 are registered as 34 through 41. Their upstream filenames remain
    unchanged to keep future feature-head merges reviewable. Local goal migration file 41 is
    registered as database migration 42. `Migrations.ts` is the authoritative ID mapping.
@@ -352,6 +353,59 @@ selects the wrong interface. Advanced overrides are available through `--web-url
 - Update watchlist: keep wrapper flags aligned with `scripts/dev-runner.ts`, verify network-address
   detection on the target host, and retain the repository-local `corepack pnpm exec vp` invocation so
   no global `vp` install is required.
+
+### 2026-07-24 - Current main and PR #2829 refresh
+
+- Previous baseline: `origin/main@b44ed835c63caafae619e303ca019a251c2698b2`.
+- New baseline: `origin/main@bb38c3320d0a4eec4e9097fdc400970d881ff559`, integrated by
+  merge commit `631809152`.
+- Refreshed PR #2829 from `f30673fea7df138fc210fbab4288fb03aaa96142` to
+  `7732874f501e48f74b19866c95a086af7b1ee6ad`, integrated by merge commit `4fc842fc0`.
+- Post-merge compatibility fixes are in `38f1cdc26e82fc1752270426ca7fc6c9f95d2776`.
+- Conflicts covered the current ChatView route and header contracts, command menu and Sidebar V2
+  projections, timeline and toolbar components, mobile/server contracts, styles, migrations, and
+  replay fixtures.
+- Decisions:
+  - retain the V2 orchestrator, scheduler, native goal support, queueing, and settlement semantics
+  - adopt current-main auto runtime selection, `t3.json` scripts, direct settled-thread URLs,
+    large-diff collapsing, current UI/mobile behavior, and Claude skill handling
+  - keep queued runs non-blocking when starting the next queue entry while still preventing thread
+    settlement until the queue is empty
+  - preserve migration IDs 1 through 42; the renamed `041_ProjectionThreadsSettled.ts` file remains
+    registry migration 33
+  - allow plan-only commits to pass the formatter hook when every staged path is intentionally
+    excluded by the formatter
+- Focused verification:
+  - 36 integration test files and 633 tests passed
+  - 4 replay suites passed with 79 passing and 1 skipped test
+  - Contracts, Client Runtime, Server, Web, and Mobile typechecks passed
+  - scoped lint with `--deny-warnings`, marker scans, and `git diff --check` passed
+  - desktop build and release smoke passed
+- Integrated Web verification used an isolated environment and repository-pinned Chromium after the
+  collaborative preview repeatedly failed to attach to the environment port. A real Codex thread
+  exposed `/goal`, `/review`, and `/compact`; goal create/display, pause/resume, budget edit, clear,
+  and reload persistence worked without creating a run. Schedule create/reload, pause/resume,
+  run-now, new-thread dispatch, successful agent response, confirmed delete, and empty-state
+  persistence also worked.
+- Lyra macOS build:
+  - source: `38f1cdc26e82fc1752270426ca7fc6c9f95d2776`
+  - artifact:
+    `~/codex-t3code-nightly/artifacts/mac-38f1cdc26/T3-Code-0.0.28-arm64.dmg`
+  - SHA-256: `72922da20a18ddaddc835ff9517b7d7d6f872f59137df9c6c0dcb8978f292399`
+  - DMG validation, arm64 bundle inspection, ad-hoc signature verification, and application launch
+    passed
+- Lyra iOS Simulator build:
+  - source: `38f1cdc26e82fc1752270426ca7fc6c9f95d2776`
+  - artifact:
+    `~/codex-t3code-nightly/artifacts/ios-38f1cdc26/T3CodeDev-simulator.zip`
+  - SHA-256: `47b3c154f32465bbfcfef477011cd2b2675a379d8d379022da5230c9788b5240`
+  - `com.t3tools.t3code.dev` built for arm64, installed, and launched on the iPhone 17 Pro simulator;
+    the captured Dev Client screen correctly reported no running development server
+- Apple distribution caveat: the macOS artifact is ad-hoc signed and not notarized. A physical-device
+  iOS or TestFlight build still requires an Apple Developer team, signing certificate, and
+  provisioning profile.
+- Known client gap: native `/goal` controls are Web-only. Mobile exposes `/review` and `/compact`,
+  but needs a dedicated goal UI before `/goal` can be used safely there.
 
 ## Completion and retirement rules
 
