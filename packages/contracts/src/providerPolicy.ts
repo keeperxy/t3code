@@ -17,6 +17,7 @@ export type ProviderSandboxMode = typeof ProviderSandboxMode.Type;
 
 export const RuntimeMode = Schema.Literals([
   "approval-required",
+  "auto",
   "auto-accept-edits",
   "full-access",
 ]);

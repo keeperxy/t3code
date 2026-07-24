@@ -52,7 +52,12 @@ import {
   type HomeGroupDisplayState,
   type HomeListItem,
 } from "./homeListItems";
-import { buildHomeThreadGroups, type HomeProjectSortOrder } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  buildHomeThreadGroups,
+  sortHomeProjectScopes,
+  type HomeProjectSortOrder,
+} from "./homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
 import { WorkspaceConnectionStatus } from "./WorkspaceConnectionStatus";
 import { shouldShowWorkspaceConnectionStatus } from "./workspace-connection-status";
@@ -77,7 +82,6 @@ interface HomeScreenProps {
   readonly onProjectChange: (projectKey: string | null) => void;
   readonly onProjectSortOrderChange: (sortOrder: HomeProjectSortOrder) => void;
   readonly onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  readonly onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   readonly onAddConnection: () => void;
   readonly onOpenEnvironments: () => void;
   readonly onOpenSettings: () => void;
@@ -241,43 +245,69 @@ export function HomeScreen(props: HomeScreenProps) {
     onScrollBeginDrag: handleScrollBeginDrag,
   });
 
-  const scopedProject = useMemo(
+  const projectScopes = useMemo(
+    () =>
+      buildHomeProjectScopes({
+        projects: props.projects,
+        environmentId: props.selectedEnvironmentId,
+        projectGroupingMode: props.projectGroupingMode,
+      }),
+    [props.projectGroupingMode, props.projects, props.selectedEnvironmentId],
+  );
+  const selectedProjectScope = useMemo(
     () =>
       props.selectedProjectKey === null
         ? null
-        : (props.projects.find(
-            (project) =>
-              scopedProjectKey(project.environmentId, project.id) === props.selectedProjectKey &&
-              (props.selectedEnvironmentId === null ||
-                project.environmentId === props.selectedEnvironmentId),
+        : (projectScopes.find(
+            (scope) =>
+              scope.key === props.selectedProjectKey ||
+              scope.projectRefs.some(
+                (projectRef) =>
+                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
+                  props.selectedProjectKey,
+              ),
           ) ?? null),
-    [props.projects, props.selectedEnvironmentId, props.selectedProjectKey],
+    [projectScopes, props.selectedProjectKey],
+  );
+  const selectedProjectRefKeys = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : new Set(
+            selectedProjectScope.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [selectedProjectScope],
   );
   const scopedProjects = useMemo(
-    () => (scopedProject === null ? props.projects : [scopedProject]),
-    [props.projects, scopedProject],
+    () =>
+      selectedProjectRefKeys === null
+        ? props.projects
+        : props.projects.filter((project) =>
+            selectedProjectRefKeys.has(scopedProjectKey(project.environmentId, project.id)),
+          ),
+    [props.projects, selectedProjectRefKeys],
   );
   const scopedThreads = useMemo(
     () =>
-      scopedProject === null
+      selectedProjectRefKeys === null
         ? props.threads
-        : props.threads.filter(
-            (thread) =>
-              thread.environmentId === scopedProject.environmentId &&
-              thread.projectId === scopedProject.id,
+        : props.threads.filter((thread) =>
+            selectedProjectRefKeys.has(scopedProjectKey(thread.environmentId, thread.projectId)),
           ),
-    [props.threads, scopedProject],
+    [props.threads, selectedProjectRefKeys],
   );
   const scopedPendingTasks = useMemo(
     () =>
-      scopedProject === null
+      selectedProjectRefKeys === null
         ? props.pendingTasks
-        : props.pendingTasks.filter(
-            (pendingTask) =>
-              pendingTask.message.environmentId === scopedProject.environmentId &&
-              pendingTask.creation.projectId === scopedProject.id,
+        : props.pendingTasks.filter((pendingTask) =>
+            selectedProjectRefKeys.has(
+              scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+            ),
           ),
-    [props.pendingTasks, scopedProject],
+    [props.pendingTasks, selectedProjectRefKeys],
   );
 
   const projectGroups = useMemo(
@@ -334,19 +364,61 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ProjectScopeKey = props.selectedProjectKey;
   const v2ScopeProjects = useMemo(
     () =>
-      props.selectedEnvironmentId === null
-        ? props.projects
-        : props.projects.filter((project) => project.environmentId === props.selectedEnvironmentId),
-    [props.projects, props.selectedEnvironmentId],
+      sortHomeProjectScopes({
+        scopes: projectScopes,
+        threads: props.threads,
+        pendingTasks: props.pendingTasks,
+        projectSortOrder: props.projectSortOrder,
+      }),
+    [
+      props.pendingTasks,
+      props.projects,
+      props.projectSortOrder,
+      props.selectedEnvironmentId,
+      props.threads,
+      projectScopes,
+    ],
   );
-  const v2ScopedProject = useMemo(
+  const v2ScopedProjectGroup = useMemo(
     () =>
       v2ProjectScopeKey === null
         ? null
         : (v2ScopeProjects.find(
-            (project) => scopedProjectKey(project.environmentId, project.id) === v2ProjectScopeKey,
+            (scope) =>
+              scope.key === v2ProjectScopeKey ||
+              scope.projectRefs.some(
+                (projectRef) =>
+                  scopedProjectKey(projectRef.environmentId, projectRef.projectId) ===
+                  v2ProjectScopeKey,
+              ),
           ) ?? null),
     [v2ProjectScopeKey, v2ScopeProjects],
+  );
+  const v2ProjectTitleByProjectKey = useMemo(
+    () =>
+      new Map(
+        v2ScopeProjects.flatMap((scope) =>
+          scope.projectRefs.map(
+            (projectRef) =>
+              [
+                scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+                scope.title,
+              ] as const,
+          ),
+        ),
+      ),
+    [v2ScopeProjects],
+  );
+  const v2ScopedProjectKeys = useMemo(
+    () =>
+      v2ScopedProjectGroup === null
+        ? null
+        : new Set(
+            v2ScopedProjectGroup.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
+          ),
+    [v2ScopedProjectGroup],
   );
   // Thread List v2 (beta): one flat list in creation order, no grouping.
   // Settled threads collapse into a recency tail below the card block.
@@ -428,13 +500,7 @@ export function HomeScreen(props: HomeScreenProps) {
     return buildThreadListV2Items({
       threads: props.threads.filter((thread) => thread.archivedAt === null),
       environmentId: props.selectedEnvironmentId,
-      projectRef:
-        v2ScopedProject === null
-          ? null
-          : {
-              environmentId: v2ScopedProject.environmentId,
-              projectId: v2ScopedProject.id,
-            },
+      projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
       changeRequestStateByKey,
       settlementEnvironmentIds,
@@ -450,7 +516,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.selectedEnvironmentId,
     props.threads,
     threadListV2Enabled,
-    v2ScopedProject,
+    v2ScopedProjectGroup,
   ]);
   const threadListV2Items = threadListV2Layout.items;
 
@@ -464,6 +530,9 @@ export function HomeScreen(props: HomeScreenProps) {
           projectByKey.get(scopedProjectKey(item.thread.environmentId, item.thread.projectId)) ??
           null
         }
+        projectTitle={v2ProjectTitleByProjectKey.get(
+          scopedProjectKey(item.thread.environmentId, item.thread.projectId),
+        )}
         providerDriver={
           serverConfigs
             .get(item.thread.environmentId)
@@ -507,6 +576,7 @@ export function HomeScreen(props: HomeScreenProps) {
       props.savedConnectionsById,
       serverConfigs,
       settlementEnvironmentIds,
+      v2ProjectTitleByProjectKey,
     ],
   );
   const v2KeyExtractor = useCallback(
@@ -696,9 +766,10 @@ export function HomeScreen(props: HomeScreenProps) {
     (pendingTask) =>
       (props.selectedEnvironmentId === null ||
         pendingTask.message.environmentId === props.selectedEnvironmentId) &&
-      (v2ScopedProject === null ||
-        (pendingTask.message.environmentId === v2ScopedProject.environmentId &&
-          pendingTask.creation.projectId === v2ScopedProject.id)) &&
+      (v2ScopedProjectKeys === null ||
+        v2ScopedProjectKeys.has(
+          scopedProjectKey(pendingTask.message.environmentId, pendingTask.creation.projectId),
+        )) &&
       (v2SearchQuery.length === 0 || pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
   );
   // Project scoping lives in the header filter menu (no inline chip row on
@@ -725,9 +796,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const listEmpty = !hasResults ? (
     hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-    ) : scopedProject !== null ? (
+    ) : selectedProjectScope !== null ? (
       <EmptyState
-        title={`No threads in ${scopedProject.title}`}
+        title={`No threads in ${selectedProjectScope.title}`}
         detail="Choose another project or create a new task."
       />
     ) : selectedEnvironmentLabel ? (
@@ -747,9 +818,9 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListEmpty =
     v2PendingTasks.length > 0 ? null : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
-    ) : v2ScopedProject !== null ? (
+    ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
-        title={`No threads in ${v2ScopedProject.title}`}
+        title={`No threads in ${v2ScopedProjectGroup.title}`}
         detail="Choose another project or create a new task."
       />
     ) : (

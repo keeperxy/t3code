@@ -1,4 +1,4 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import { FolderGit2Icon, FolderGitIcon, FolderIcon, HistoryIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 import { cn } from "../lib/utils";
 import {
@@ -26,6 +26,8 @@ import {
 } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+export const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
+
 interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
@@ -33,6 +35,8 @@ interface BranchToolbarEnvModeSelectorProps {
   workspaceRoot?: string | null;
   onEnvModeChange: (mode: EnvMode) => void;
   displayMode?: "toolbar" | "panel";
+  previousWorktreeLabel?: string | null;
+  onUsePreviousWorktree?: () => void;
 }
 
 export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSelector({
@@ -42,7 +46,10 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   workspaceRoot = null,
   onEnvModeChange,
   displayMode = "toolbar",
+  previousWorktreeLabel,
+  onUsePreviousWorktree,
 }: BranchToolbarEnvModeSelectorProps) {
+  const showPreviousWorktree = Boolean(previousWorktreeLabel && onUsePreviousWorktree);
   const workspacePath = displayMode === "panel" ? (activeWorktreePath ?? workspaceRoot) : null;
   const workspaceDisplayName = resolveWorkspaceDisplayName(workspacePath);
   const workspaceKind = activeWorktreePath ? "Worktree" : "Project folder";
@@ -53,8 +60,11 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         label: workspaceDisplayName ?? resolveCurrentWorkspaceLabel(activeWorktreePath),
       },
       { value: "worktree", label: resolveEnvModeLabel("worktree") },
+      ...(showPreviousWorktree && previousWorktreeLabel
+        ? [{ value: PREVIOUS_WORKTREE_SELECT_VALUE, label: previousWorktreeLabel }]
+        : []),
     ],
-    [activeWorktreePath, workspaceDisplayName],
+    [activeWorktreePath, previousWorktreeLabel, showPreviousWorktree, workspaceDisplayName],
   );
 
   if (envLocked) {
@@ -99,7 +109,13 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
     <Select
       modal={false}
       value={effectiveEnvMode}
-      onValueChange={(value) => onEnvModeChange(value as EnvMode)}
+      onValueChange={(value: string | null) => {
+        if (value === PREVIOUS_WORKTREE_SELECT_VALUE) {
+          onUsePreviousWorktree?.();
+          return;
+        }
+        onEnvModeChange(value as EnvMode);
+      }}
       items={envModeItems}
     >
       <Tooltip>
@@ -164,6 +180,14 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
               {resolveEnvModeLabel("worktree")}
             </span>
           </SelectItem>
+          {showPreviousWorktree && previousWorktreeLabel ? (
+            <SelectItem value={PREVIOUS_WORKTREE_SELECT_VALUE}>
+              <span className="inline-flex items-center gap-1.5">
+                <HistoryIcon className="size-3" />
+                {previousWorktreeLabel}
+              </span>
+            </SelectItem>
+          ) : null}
         </SelectGroup>
       </SelectPopup>
     </Select>

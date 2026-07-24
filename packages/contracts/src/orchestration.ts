@@ -35,6 +35,7 @@ import {
 } from "./applicationEvent.ts";
 
 export { OrchestrationProjectShell } from "./orchestrationProject.ts";
+export { ProjectScriptIcon } from "./project.ts";
 
 export {
   ApplicationProjectCreatedPayload as ProjectCreatedPayload,

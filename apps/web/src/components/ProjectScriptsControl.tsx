@@ -2,6 +2,7 @@ import type {
   ProjectScript,
   ProjectScriptIcon,
   ResolvedKeybindingsConfig,
+  T3ProjectFileScript,
 } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
@@ -11,6 +12,7 @@ import {
 import {
   BugIcon,
   ChevronDownIcon,
+  DownloadIcon,
   FlaskConicalIcon,
   HammerIcon,
   ListChecksIcon,
@@ -54,7 +56,16 @@ import {
 import { Group, GroupSeparator } from "./ui/group";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "./ui/menu";
+import {
+  Menu,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
@@ -109,9 +120,13 @@ export interface NewProjectScriptInput {
 
 export type ProjectScriptActionResult = AtomCommandResult<void, unknown>;
 
+const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
+
 interface ProjectScriptsControlProps {
   displayMode?: "toolbar" | "panel";
   scripts: ReadonlyArray<ProjectScript>;
+  /** Scripts declared in the project's checked-in t3.json, offered for import. */
+  fileScripts?: ReadonlyArray<T3ProjectFileScript>;
   keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
@@ -126,6 +141,7 @@ interface ProjectScriptsControlProps {
 export default function ProjectScriptsControl({
   displayMode = "toolbar",
   scripts,
+  fileScripts = NO_FILE_SCRIPTS,
   keybindings,
   preferredScriptId = null,
   onRunScript,
@@ -157,6 +173,18 @@ export default function ProjectScriptsControl({
     }
     return primaryProjectScript(scripts);
   }, [preferredScriptId, scripts]);
+  const importableScripts = useMemo(
+    () =>
+      fileScripts.filter(
+        (fileScript) =>
+          !scripts.some(
+            (script) =>
+              script.command === fileScript.command ||
+              script.name.toLowerCase() === fileScript.name.toLowerCase(),
+          ),
+      ),
+    [fileScripts, scripts],
+  );
   const isEditing = editingScriptId !== null;
   const dropdownItemClassName =
     "data-highlighted:bg-transparent data-highlighted:text-foreground hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground data-highlighted:hover:bg-accent data-highlighted:hover:text-accent-foreground data-highlighted:focus-visible:bg-accent data-highlighted:focus-visible:text-accent-foreground";
@@ -263,6 +291,57 @@ export default function ProjectScriptsControl({
     void onDeleteScript(editingScriptId);
   }, [editingScriptId, onDeleteScript]);
 
+  const importFileScript = async (fileScript: T3ProjectFileScript) => {
+    const payload: NewProjectScriptInput = {
+      name: fileScript.name,
+      command: fileScript.command,
+      icon: fileScript.icon ?? "play",
+      runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
+      keybinding: null,
+      previewUrl: fileScript.previewUrl ?? null,
+      autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
+    };
+    const result = await onAddScript(payload);
+    if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+      // Surface the failure through the regular add dialog, prefilled so the
+      // user can adjust and retry.
+      const error = squashAtomCommandFailure(result);
+      setEditingScriptId(null);
+      setName(payload.name);
+      setCommand(payload.command);
+      setIcon(payload.icon);
+      setIconPickerOpen(false);
+      setRunOnWorktreeCreate(payload.runOnWorktreeCreate);
+      setKeybinding("");
+      setPreviewUrl(payload.previewUrl ?? "");
+      setAutoOpenPreview(payload.autoOpenPreview);
+      setValidationError(error instanceof Error ? error.message : "Failed to import action.");
+      setDialogOpen(true);
+    }
+  };
+
+  const importMenuItems = importableScripts.length > 0 && (
+    <>
+      {primaryScript && <MenuSeparator />}
+      <MenuGroup>
+        <MenuGroupLabel>From t3.json</MenuGroupLabel>
+        {importableScripts.map((fileScript) => (
+          <MenuItem
+            key={`${fileScript.name} ${fileScript.command}`}
+            className={dropdownItemClassName}
+            onClick={() => void importFileScript(fileScript)}
+          >
+            <ScriptIcon icon={fileScript.icon ?? "play"} className="size-4" />
+            <span className="truncate">{fileScript.name}</span>
+            <MenuShortcut className="ms-auto">
+              <DownloadIcon className="size-3.5" aria-label="Import" />
+            </MenuShortcut>
+          </MenuItem>
+        ))}
+      </MenuGroup>
+    </>
+  );
+
   return (
     <>
       {primaryScript ? (
@@ -368,6 +447,7 @@ export default function ProjectScriptsControl({
                   </MenuItem>
                 );
               })}
+              {importMenuItems}
               <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
                 <PlusIcon className="size-4" />
                 {isPanel ? "Add project script" : "Add action"}
@@ -375,6 +455,40 @@ export default function ProjectScriptsControl({
             </MenuPopup>
           </Menu>
         </ActionGroup>
+      ) : importableScripts.length > 0 ? (
+        <Menu highlightItemOnHover={false}>
+          <MenuTrigger
+            render={
+              <Button
+                size="xs"
+                variant={isPanel ? "ghost" : "outline"}
+                className={isPanel ? THREAD_DETAILS_PANEL_ROW_CLASS : undefined}
+                aria-label={isPanel ? "Project scripts" : "Project actions"}
+              />
+            }
+          >
+            <PlusIcon className="size-3.5" />
+            <span
+              className={cn(
+                "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+                isPanel && "not-sr-only ml-0.5",
+              )}
+            >
+              {isPanel ? "Project scripts" : "Add action"}
+            </span>
+            <ChevronDownIcon className="size-3.5" />
+          </MenuTrigger>
+          <MenuPopup
+            align="end"
+            className={isPanel ? THREAD_DETAILS_PANEL_ROW_POPUP_CLASS : undefined}
+          >
+            {importMenuItems}
+            <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
+              <PlusIcon className="size-4" />
+              {isPanel ? "Add project script" : "Add action"}
+            </MenuItem>
+          </MenuPopup>
+        </Menu>
       ) : (
         <Tooltip>
           <TooltipTrigger
@@ -423,7 +537,7 @@ export default function ProjectScriptsControl({
         }}
         open={dialogOpen}
       >
-        <DialogPopup className="before:hidden">
+        <DialogPopup>
           <DialogHeader>
             <DialogTitle>{isEditing ? "Edit Action" : "Add Action"}</DialogTitle>
             <DialogDescription>

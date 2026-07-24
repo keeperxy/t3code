@@ -749,7 +749,7 @@ export function BranchToolbarBranchSelector({
           <ComboboxTrigger
             render={<Button variant="ghost" size={displayMode === "panel" ? "sm" : "xs"} />}
             className={cn(
-              "min-w-0 text-muted-foreground/70 hover:text-foreground/80",
+              "min-w-0 max-w-full text-muted-foreground/70 hover:text-foreground/80",
               displayMode === "panel" && THREAD_DETAILS_PANEL_ROW_CLASS,
             )}
             disabled={isInitialBranchesLoadPending || isBranchActionPending}
