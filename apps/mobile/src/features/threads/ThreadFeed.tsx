@@ -100,7 +100,7 @@ import {
   type ThreadFeedLatestRun,
 } from "../../lib/threadActivity";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
-import { ThreadWorkLog } from "./thread-work-log";
+import { ThreadWorkGroupToggle, ThreadWorkLog } from "./thread-work-log";
 import { useMarkdownCodeHighlight } from "./markdownCodeHighlightState";
 import { useAssetUrl } from "../../state/assets";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -935,6 +935,18 @@ function renderFeedEntry(
     );
   }
 
+  if (entry.type === "work-toggle") {
+    return (
+      <ThreadWorkGroupToggle
+        expanded={entry.expanded}
+        hiddenCount={entry.hiddenCount}
+        iconSubtleColor={iconSubtleColor}
+        onlyToolActivities={entry.onlyToolActivities}
+        onToggle={() => props.onToggleWorkGroup(entry.groupId)}
+      />
+    );
+  }
+
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
@@ -1534,9 +1546,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         props.feed,
         props.latestRun,
         expandedTurnIds,
+        new Set(
+          Object.entries(expandedWorkGroups)
+            .filter(([, expanded]) => expanded)
+            .map(([groupId]) => groupId),
+        ),
         props.activeWorkStartedAt,
       ),
-    [expandedTurnIds, props.activeWorkStartedAt, props.feed, props.latestRun],
+    [expandedTurnIds, expandedWorkGroups, props.activeWorkStartedAt, props.feed, props.latestRun],
   );
 
   // The empty↔filled key below remounts the list, which resets its imperative
@@ -1671,7 +1688,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleWorkGroup = useCallback(
     (groupId: string) => {
-      suspendEndScrollMaintenanceForDisclosure(groupId);
+      suspendEndScrollMaintenanceForDisclosure(`work-toggle:${groupId}`);
       setInteractionState((current) => ({
         ...current,
         expandedWorkGroups: {

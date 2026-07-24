@@ -28,6 +28,46 @@ export function threadLastActivityAt(shell: EnvironmentThreadShell): string | nu
 }
 
 /**
+ * A queued turn start lives for at most this long. Session adoption normally
+ * takes seconds; after this window an unadopted message is stale state rather
+ * than work that should keep the thread permanently unsettled.
+ */
+export const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+
+/**
+ * Detects a user message that has been dispatched but has not yet been
+ * adopted by a run. Once adopted, the run's requested timestamp catches up
+ * with the message timestamp and clears this transient state.
+ */
+export function hasQueuedTurnStart(
+  shell: Pick<EnvironmentThreadShell, "latestUserMessageAt" | "latestRun" | "runtime">,
+  options: { readonly now: string },
+): boolean {
+  if (
+    shell.runtime?.status === "preparing" ||
+    shell.runtime?.status === "queued" ||
+    shell.runtime?.status === "starting"
+  ) {
+    return true;
+  }
+  if (shell.latestUserMessageAt === null) return false;
+  if (shell.runtime?.status === "failed") return false;
+
+  const messageAt = Date.parse(shell.latestUserMessageAt);
+  const now = Date.parse(options.now);
+  if (Number.isNaN(messageAt) || Number.isNaN(now)) return false;
+  // Bound both future and past skew so a clock-ahead client cannot pin the
+  // thread active for the entire skew interval.
+  if (Math.abs(now - messageAt) > QUEUED_TURN_START_GRACE_MS) return false;
+  if (shell.latestRun === null) return true;
+  return [
+    shell.latestRun.requestedAt,
+    shell.latestRun.startedAt,
+    shell.latestRun.completedAt,
+  ].every((candidate) => candidate === null || Date.parse(candidate) < messageAt);
+}
+
+/**
  * A thread may be settled only when none of effectiveSettled's activity
  * blockers hold. This is deliberately the same list: anything the partition
  * refuses to CLASSIFY as settled must also be refused as a settle TARGET.
@@ -35,11 +75,12 @@ export function threadLastActivityAt(shell: EnvironmentThreadShell): string | nu
  * the UI can disable/reject before a round trip.
  */
 export function canSettle(
-  shell: Pick<EnvironmentThreadShell, "hasPendingApprovals" | "hasPendingUserInput" | "runtime">,
-  _options: { readonly now: string },
+  shell: EnvironmentThreadShell,
+  options: { readonly now: string },
 ): boolean {
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (threadRuntimeIsActive(shell.runtime)) return false;
+  if (hasQueuedTurnStart(shell, options)) return false;
   return true;
 }
 
@@ -79,6 +120,16 @@ export function effectiveSettled(
   // Blocked work must remain visible even when a user explicitly settled it.
   if (shell.hasPendingApprovals || shell.hasPendingUserInput) return false;
   if (threadRuntimeIsActive(shell.runtime)) return false;
+  if (hasQueuedTurnStart(shell, { now: options.now })) {
+    // Trust a newer server-side settle acknowledgement near the grace
+    // boundary; otherwise keep genuinely newer work visible.
+    const serverAdjudicated =
+      shell.settledOverride === "settled" &&
+      shell.settledAt !== null &&
+      shell.latestUserMessageAt !== null &&
+      Date.parse(shell.settledAt) >= Date.parse(shell.latestUserMessageAt);
+    if (!serverAdjudicated) return false;
+  }
   if (shell.settledOverride === "settled") return true;
   // "active" is the explicit keep-active pin: it suppresses auto-settle
   // until real activity clears it server-side.

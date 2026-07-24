@@ -600,12 +600,14 @@ const isProviderAdapterRuntimeRequestResponseError = Schema.is(
 
 function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
   readonly approvalPolicy: CodexSchema.V2TurnStartParams__AskForApproval;
+  readonly approvalsReviewer: CodexSchema.V2TurnStartParams__ApprovalsReviewer;
   readonly sandboxPolicy: CodexSchema.V2TurnStartParams__SandboxPolicy;
 } {
   switch (runtimeMode) {
     case "approval-required":
       return {
         approvalPolicy: "untrusted",
+        approvalsReviewer: "user",
         sandboxPolicy: {
           type: "readOnly",
         },
@@ -613,6 +615,15 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
     case "auto-accept-edits":
       return {
         approvalPolicy: "on-request",
+        approvalsReviewer: "user",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+        },
+      };
+    case "auto":
+      return {
+        approvalPolicy: "on-request",
+        approvalsReviewer: "auto_review",
         sandboxPolicy: {
           type: "workspaceWrite",
         },
@@ -620,6 +631,7 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
     case "full-access":
       return {
         approvalPolicy: "never",
+        approvalsReviewer: "user",
         sandboxPolicy: {
           type: "dangerFullAccess",
         },
@@ -674,6 +686,9 @@ export function buildCodexTurnStartParams(input: {
       input: input.codexInput,
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
+      // Always explicit: omitting this on resume leaves Codex's previous
+      // reviewer sticky after switching away from Auto mode.
+      approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
       ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),

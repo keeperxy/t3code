@@ -26,6 +26,8 @@ import * as DateTime from "effect/DateTime";
 export type PendingApproval = ThreadPendingApproval;
 export type PendingUserInput = ThreadPendingUserInput;
 
+const MAX_VISIBLE_WORK_LOG_ENTRIES = 1;
+
 export interface PendingUserInputDraftAnswer {
   readonly selectedOptionLabel?: string;
   readonly customAnswer?: string;
@@ -104,6 +106,16 @@ export type ThreadFeedEntry =
       readonly createdAt: string;
       readonly runId: RunId | null;
       readonly activities: ReadonlyArray<ThreadFeedActivity>;
+    }
+  | {
+      readonly type: "work-toggle";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly runId: RunId | null;
+      readonly groupId: string;
+      readonly hiddenCount: number;
+      readonly expanded: boolean;
+      readonly onlyToolActivities: boolean;
     }
   | {
       readonly type: "run-fold";
@@ -515,9 +527,13 @@ export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
   expandedRunIds: ReadonlySet<RunId>,
+  expandedWorkGroupIds: ReadonlySet<string> = new Set(),
   activeWorkStartedAt: string | null = null,
 ): ThreadFeedEntry[] {
-  const sourceFeed = feed.filter((entry) => entry.type !== "run-fold" && entry.type !== "working");
+  const sourceFeed = feed.filter(
+    (entry) =>
+      entry.type !== "run-fold" && entry.type !== "work-toggle" && entry.type !== "working",
+  );
   const foldsByAnchorId = deriveThreadFeedRunFolds(sourceFeed, latestRun);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
@@ -538,7 +554,9 @@ export function deriveThreadFeedPresentation(
         expanded: expandedRunIds.has(fold.runId),
       });
     }
-    if (!collapsedEntryIds.has(entry.id)) result.push(entry);
+    if (!collapsedEntryIds.has(entry.id)) {
+      appendPresentedFeedEntry(result, entry, expandedWorkGroupIds);
+    }
   }
   if (activeWorkStartedAt !== null) {
     result.push({
@@ -548,6 +566,56 @@ export function deriveThreadFeedPresentation(
     });
   }
   return result;
+}
+
+function appendPresentedFeedEntry(
+  result: ThreadFeedEntry[],
+  entry: Exclude<ThreadFeedEntry, { readonly type: "run-fold" | "work-toggle" | "working" }>,
+  expandedWorkGroupIds: ReadonlySet<string>,
+): void {
+  if (entry.type !== "activity-group") {
+    result.push(entry);
+    return;
+  }
+
+  const activities = entry.activities.filter(
+    (activity) => !(activity.toolLike && activity.status === "neutral"),
+  );
+  if (activities.length === 0) {
+    return;
+  }
+  if (activities.length <= MAX_VISIBLE_WORK_LOG_ENTRIES) {
+    result.push({
+      ...entry,
+      activities,
+    });
+    return;
+  }
+
+  const groupId = entry.id;
+  const expanded = expandedWorkGroupIds.has(groupId);
+  const hiddenCount = activities.length - MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const visibleActivities = expanded ? activities : activities.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES);
+
+  for (const activity of visibleActivities) {
+    result.push({
+      type: "activity-group",
+      id: activity.id,
+      createdAt: activity.createdAt,
+      runId: activity.runId,
+      activities: [activity],
+    });
+  }
+  result.push({
+    type: "work-toggle",
+    id: `work-toggle:${groupId}`,
+    createdAt: entry.createdAt,
+    runId: entry.runId,
+    groupId,
+    hiddenCount,
+    expanded,
+    onlyToolActivities: activities.every((activity) => activity.toolLike),
+  });
 }
 export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,

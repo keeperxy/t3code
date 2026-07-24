@@ -247,9 +247,9 @@ describe("MessagesTimeline", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
-        latestTurn={{
-          turnId,
-          state: "completed",
+        latestRun={{
+          runId,
+          status: "completed",
           startedAt: MESSAGE_CREATED_AT,
           completedAt: MESSAGE_CREATED_AT,
         }}

@@ -186,6 +186,8 @@ export function applyToProjection(
     case "thread.settled":
     case "thread.unsettled":
     case "thread.deleted":
+    case "thread.settled":
+    case "thread.unsettled":
     case "thread.metadata-updated":
     case "thread.runtime-mode-updated":
     case "thread.interaction-mode-updated":
@@ -1034,6 +1036,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           case "thread.settled":
           case "thread.unsettled":
           case "thread.deleted":
+          case "thread.settled":
+          case "thread.unsettled":
           case "thread.metadata-updated":
           case "thread.runtime-mode-updated":
           case "thread.interaction-mode-updated":
@@ -1854,6 +1858,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           event.type !== "thread.settled" &&
           event.type !== "thread.unsettled" &&
           event.type !== "thread.deleted" &&
+          event.type !== "thread.settled" &&
+          event.type !== "thread.unsettled" &&
           event.type !== "thread.metadata-updated" &&
           event.type !== "thread.runtime-mode-updated" &&
           event.type !== "thread.interaction-mode-updated" &&

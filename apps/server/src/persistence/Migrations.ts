@@ -45,7 +45,7 @@ import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexe
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
-import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
+import Migration0033 from "./Migrations/041_ProjectionThreadsSettled.ts";
 // The orchestration-v2 migrations originally used IDs 33-40. Main published
 // ProjectionThreadsSettled as ID 33 first, so register them as IDs 34-41 here.
 import Migration0034 from "./Migrations/033_OrchestrationV2.ts";

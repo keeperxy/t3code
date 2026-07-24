@@ -204,6 +204,22 @@ describe("resolveSidebarStageBadgeLabel", () => {
   });
 });
 
+function makeLatestTurn(overrides?: {
+  completedAt?: string | null;
+  startedAt?: string | null;
+}): OrchestrationLatestTurn {
+  return {
+    turnId: "turn-1" as never,
+    state: "completed",
+    assistantMessageId: null,
+    requestedAt: "2026-03-09T10:00:00.000Z",
+    startedAt:
+      overrides?.startedAt !== undefined ? overrides.startedAt : "2026-03-09T10:00:00.000Z",
+    completedAt:
+      overrides?.completedAt !== undefined ? overrides.completedAt : "2026-03-09T10:05:00.000Z",
+  };
+}
+
 describe("sidebar thread lineage helpers", () => {
   it("identifies subagent threads so the sidebar can hide them", () => {
     const parentId = ThreadId.make("thread-parent");
