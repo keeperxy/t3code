@@ -36,15 +36,21 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
   function* (input: {
     readonly appDataDirectory: string;
     readonly isDevelopment: boolean;
+    readonly appVersion?: string;
+    readonly isPackaged?: boolean;
     readonly platform: NodeJS.Platform;
   }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const isV2Build = input.isPackaged === true && /-v2\.\d{8}\.\d+$/.test(input.appVersion ?? "");
     const names = input.isDevelopment
       ? { current: "t3code-dev", legacy: "T3 Code (Dev)" }
-      : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
+      : isV2Build
+        ? { current: "t3code-v2-custom", legacy: "T3 Code (v2)" }
+        : { current: "t3code-v2", legacy: "T3 Code (Alpha)" };
     const destinationPath = path.join(input.appDataDirectory, names.current);
     const legacyPath = path.join(input.appDataDirectory, names.legacy);
+    if (isV2Build) return destinationPath;
     const inspect = (resourcePath: string) =>
       fs
         .exists(resourcePath)
