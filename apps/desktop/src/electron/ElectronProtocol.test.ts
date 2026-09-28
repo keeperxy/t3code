@@ -22,6 +22,12 @@ import * as ElectronProtocol from "./ElectronProtocol.ts";
 const protocolLayer = ElectronProtocol.layer.pipe(Layer.provide(NodeServices.layer));
 
 describe("ElectronProtocol", () => {
+  it("uses a distinct packaged v2 renderer scheme", () => {
+    assert.equal(ElectronProtocol.getDesktopScheme(false, "0.0.43-v2.20260923.1"), "t3code-v2");
+    assert.equal(ElectronProtocol.getDesktopUrl(false, "0.0.43-v2.20260923.1"), "t3code-v2://app/");
+    assert.equal(ElectronProtocol.getDesktopScheme(false, "0.0.43"), "t3code");
+  });
+
   beforeEach(() => {
     handleMock.mockReset();
     netFetchMock.mockReset();

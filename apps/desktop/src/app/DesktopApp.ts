@@ -34,6 +34,7 @@ import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
+const V2_DESKTOP_BACKEND_PORT = 3774;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 
@@ -72,6 +73,7 @@ const { logInfo: logStartupInfo, logError: logStartupError } =
 
 const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(function* (
   configuredPort: Option.Option<number>,
+  startPort: number,
 ) {
   if (Option.isSome(configuredPort)) {
     return {
@@ -81,7 +83,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
   }
 
   const net = yield* NetService.NetService;
-  for (let port = DEFAULT_DESKTOP_BACKEND_PORT; port <= MAX_TCP_PORT; port += 1) {
+  for (let port = startPort; port <= MAX_TCP_PORT; port += 1) {
     let availableOnEveryHost = true;
 
     for (const host of DESKTOP_BACKEND_PORT_PROBE_HOSTS) {
@@ -100,7 +102,7 @@ const resolveDesktopBackendPort = Effect.fn("resolveDesktopBackendPort")(functio
   }
 
   return yield* new DesktopBackendPortUnavailableError({
-    startPort: DEFAULT_DESKTOP_BACKEND_PORT,
+    startPort,
     maxPort: MAX_TCP_PORT,
     hosts: DESKTOP_BACKEND_PORT_PROBE_HOSTS,
   });
@@ -171,7 +173,7 @@ const bootstrap = Effect.gen(function* () {
   // rather than through the local backend, so the window can open without one.
   const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
   yield* electronProtocol.registerDesktopProtocol({
-    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment, environment.appVersion),
     ...(environment.isDevelopment
       ? { targetOrigin: Option.getOrThrow(environment.devServerUrl) }
       : { assetDirectory: environment.clientAssetsDir }),
@@ -199,7 +201,13 @@ const bootstrap = Effect.gen(function* () {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
   }
 
-  const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);
+  const preferredBackendPort = DesktopEnvironment.isV2DesktopVersion(environment.appVersion)
+    ? V2_DESKTOP_BACKEND_PORT
+    : DEFAULT_DESKTOP_BACKEND_PORT;
+  const backendPortSelection = yield* resolveDesktopBackendPort(
+    environment.configuredBackendPort,
+    preferredBackendPort,
+  );
   const backendPort = backendPortSelection.port;
   yield* logBootstrapInfo(
     backendPortSelection.selectedByScan
@@ -207,7 +215,7 @@ const bootstrap = Effect.gen(function* () {
       : "using configured backend port",
     {
       port: backendPort,
-      ...(backendPortSelection.selectedByScan ? { startPort: DEFAULT_DESKTOP_BACKEND_PORT } : {}),
+      ...(backendPortSelection.selectedByScan ? { startPort: preferredBackendPort } : {}),
     },
   );
 

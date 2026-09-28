@@ -257,7 +257,29 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   it("switches desktop packaging product names to nightly for nightly builds", () => {
     assert.equal(resolveDesktopProductName("0.0.17"), "T3 Code (Alpha)");
     assert.equal(resolveDesktopProductName("0.0.17-nightly.20260413.42"), "T3 Code (Nightly)");
+    assert.equal(resolveDesktopProductName("0.0.43-v2.20260923.1"), "T3 Code (v2)");
   });
+
+  it.effect("packages the custom v2 app with its own identity and no update feed", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.43-v2.20260923.1",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.equal(config.appId, "com.coach007.t3code.v2");
+      assert.equal(config.productName, "T3 Code (v2)");
+      assert.notProperty(config, "publish");
+      assert.deepStrictEqual((config.mac as Record<string, unknown>).protocols, [
+        { name: "T3 Code (v2)", schemes: ["t3code-v2"] },
+      ]);
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
 
   it("switches desktop packaging icons to the nightly artwork for nightly versions", () => {
     assert.deepStrictEqual(resolveDesktopBuildIconAssets("0.0.17"), {

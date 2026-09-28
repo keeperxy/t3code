@@ -15,17 +15,22 @@ import * as Electron from "electron";
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
 const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
+const DESKTOP_V2_SCHEME = "t3code-v2";
 
-export function getDesktopScheme(isDevelopment: boolean): string {
-  return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;
+export function getDesktopScheme(isDevelopment: boolean, appVersion = ""): string {
+  return isDevelopment
+    ? DESKTOP_DEVELOPMENT_SCHEME
+    : /-v2\.\d{8}\.\d+$/.test(appVersion)
+      ? DESKTOP_V2_SCHEME
+      : DESKTOP_PRODUCTION_SCHEME;
 }
 
-function getDesktopOrigin(isDevelopment: boolean): string {
-  return `${getDesktopScheme(isDevelopment)}://${DESKTOP_HOST}`;
+function getDesktopOrigin(isDevelopment: boolean, appVersion = ""): string {
+  return `${getDesktopScheme(isDevelopment, appVersion)}://${DESKTOP_HOST}`;
 }
 
-export function getDesktopUrl(isDevelopment: boolean): string {
-  return `${getDesktopOrigin(isDevelopment)}/`;
+export function getDesktopUrl(isDevelopment: boolean, appVersion = ""): string {
+  return `${getDesktopOrigin(isDevelopment, appVersion)}/`;
 }
 
 export class ElectronProtocolRegistrationError extends Schema.TaggedError<ElectronProtocolRegistrationError>()(
@@ -139,6 +144,17 @@ function registerDesktopSchemePrivilegesSync(): void {
         supportFetchAPI: true,
         corsEnabled: true,
         stream: true,
+      },
+    },
+    {
+      scheme: DESKTOP_V2_SCHEME,
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        corsEnabled: true,
+        stream: true,
+        codeCache: true,
       },
     },
   ]);

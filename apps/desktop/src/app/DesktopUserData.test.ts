@@ -7,6 +7,29 @@ import * as PlatformError from "effect/PlatformError";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
+it.effect("keeps the custom v2 Electron profile separate from existing installs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-custom-v2-profile-" });
+    const existingProfile = path.join(directory, "T3 Code (Alpha)");
+    yield* fs.makeDirectory(existingProfile);
+    yield* fs.writeFileString(path.join(existingProfile, "Local State"), "existing");
+
+    const profile = yield* resolveUserDataPath({
+      appDataDirectory: directory,
+      appVersion: "0.0.43-v2.20260923.1",
+      isPackaged: true,
+      isDevelopment: false,
+      platform: "darwin",
+    });
+
+    assert.equal(profile, path.join(directory, "t3code-v2-custom"));
+    assert.equal(yield* fs.readFileString(path.join(existingProfile, "Local State")), "existing");
+    assert.isFalse(yield* fs.exists(profile));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("identifies a failed source read and preserves its cause", () => {
   const sourceState = "/profiles/t3code/Local State";
   const cause = PlatformError.systemError({

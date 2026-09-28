@@ -95,12 +95,18 @@ export class DesktopEnvironment extends Context.Service<
 
 const APP_BASE_NAME = "T3 Code";
 
+export const isV2DesktopVersion = (version: string): boolean => /-v2\.\d{8}\.\d+$/.test(version);
+
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
   readonly appVersion: string;
 }): DesktopAppStageLabel {
   if (input.isDevelopment) {
     return "Dev";
+  }
+
+  if (isV2DesktopVersion(input.appVersion)) {
+    return "v2";
   }
 
   return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
@@ -156,6 +162,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
   const homeDirectory = input.homeDirectory;
   const devServerUrl = config.devServerUrl;
   const isDevelopment = Option.isSome(devServerUrl);
+  const isV2Build = input.isPackaged && isV2DesktopVersion(input.appVersion);
   const appDataDirectory =
     input.platform === "win32"
       ? Option.getOrElse(config.appDataDirectory, () =>
@@ -164,10 +171,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
       : input.platform === "darwin"
         ? path.join(homeDirectory, "Library", "Application Support")
         : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
+  const t3Home = isV2Build ? Option.some(path.join(homeDirectory, ".t3-v2")) : config.t3Home;
   const baseDir = resolveDesktopBaseDir({
     homeDirectory,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home,
   });
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -184,7 +192,7 @@ const make = Effect.fn("desktop.environment.make")(function* (
     baseDir,
     isDevelopment,
     joinPath: path.join,
-    t3Home: config.t3Home,
+    t3Home,
   });
   const linuxApplicationsDir = path.join(
     Option.getOrElse(config.xdgDataHome, () => path.join(homeDirectory, ".local", "share")),
@@ -236,7 +244,11 @@ const make = Effect.fn("desktop.environment.make")(function* (
     branding,
     displayName,
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
-      isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+      isV2Build
+        ? "com.coach007.t3code.v2"
+        : isDevelopment
+          ? "com.t3tools.t3code.dev"
+          : "com.t3tools.t3code",
     ),
     linuxDesktopEntryName: resolveLinuxDesktopEntryName(isDevelopment),
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",

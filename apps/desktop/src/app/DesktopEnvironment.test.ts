@@ -168,6 +168,21 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("isolates the packaged v2 build from an ambient T3 home", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { isPackaged: true, appVersion: "0.0.43-v2.20260923.1" },
+        { T3CODE_HOME: "/Users/alice/.t3" },
+      );
+
+      assert.equal(environment.baseDir, "/Users/alice/.t3-v2");
+      assert.equal(environment.stateDir, "/Users/alice/.t3-v2/userdata");
+      assert.equal(environment.branding.displayName, "T3 Code (v2)");
+      assert.equal(environment.branding.stageLabel, "v2");
+      assert.equal(environment.appUserModelId, "com.coach007.t3code.v2");
+    }),
+  );
+
   it.effect("uses a configured app user model id override", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
