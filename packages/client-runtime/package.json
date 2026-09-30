@@ -195,6 +195,10 @@
       "types": "./src/state/usage.ts",
       "default": "./src/state/usage.ts"
     },
+    "./state/task-usage": {
+      "types": "./src/state/taskUsage.ts",
+      "default": "./src/state/taskUsage.ts"
+    },
     "./state/server": {
       "types": "./src/state/server.ts",
       "default": "./src/state/server.ts"

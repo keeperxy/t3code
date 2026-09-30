@@ -1110,6 +1110,80 @@ describe("deriveMessagesTimelineRows", () => {
     createdAt: "2026-01-01T00:00:01Z",
   });
 
+  it("marks one final reply per task as its usage table", () => {
+    const fence = '```t3-task-usage\n{"version":1,"taskId":"task-1","closingTurnId":"turn-1"}\n```';
+    const entry = (id: string, role: "user" | "assistant", turnId: string | null, text = fence) =>
+      ({
+        id: `${id}-entry`,
+        kind: "message",
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: id as never,
+          role,
+          text: `Done.\n\n${text}`,
+          turnId: turnId as never,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      }) as const;
+    const timelineEntries = [
+      entry("user-1", "user", null),
+      // Commentary before the final reply in the same turn.
+      entry("commentary", "assistant", "turn-1"),
+      entry("final", "assistant", "turn-1"),
+      entry("user-2", "user", null),
+      // A later reply repeating the reference stays ordinary code.
+      entry("repeat", "assistant", "turn-2"),
+    ];
+    const base = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+    const fenced = (rows: MessagesTimelineRow[]) =>
+      rows.flatMap((row) =>
+        row.kind === "message" && row.taskUsageFence
+          ? [[row.message.id, row.taskUsageFence.taskId]]
+          : [],
+      );
+
+    expect(
+      fenced(
+        deriveMessagesTimelineRows({
+          ...base,
+          latestTurn: {
+            turnId: TurnId.make("turn-2"),
+            state: "completed",
+            startedAt: "2026-01-01T00:00:00Z",
+            completedAt: "2026-01-01T00:00:01Z",
+          },
+        }),
+      ),
+    ).toEqual([["final", "task-1"]]);
+
+    // Not while the turn that holds the reply is still running.
+    expect(
+      fenced(
+        deriveMessagesTimelineRows({
+          ...base,
+          timelineEntries: timelineEntries.slice(0, 3),
+          latestTurn: {
+            turnId: TurnId.make("turn-1"),
+            state: "running",
+            startedAt: "2026-01-01T00:00:00Z",
+            completedAt: null,
+          },
+          runningTurnId: TurnId.make("turn-1"),
+          isWorking: true,
+          activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        }),
+      ),
+    ).toEqual([]);
+  });
+
   it("appends queued messages after the live rows, marking the oldest as next", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [],

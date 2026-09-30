@@ -197,6 +197,7 @@ import {
 } from "../browser/openFileInPreview";
 import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
+import { TaskUsageReport, type TaskUsageReportTarget } from "./chat/TaskUsageReport";
 
 interface ChatMarkdownProps {
   text: string;
@@ -231,6 +232,8 @@ interface ChatMarkdownProps {
       text nests under the heading that introduces it, such as a chat message's
       author. Rendered tags and their styling are unchanged. */
   headingLevelOffset?: number | undefined;
+  /** Renders this reference fence as its task's usage table. Only a final reply sets it. */
+  taskUsageReport?: TaskUsageReportTarget | undefined;
 }
 
 export interface ChatMarkdownContextReference {
@@ -2302,6 +2305,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  taskUsageReport,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2714,6 +2718,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
+      taskUsageReport,
       text,
       threadRef,
       updateThreadPullRequestLink,
@@ -2745,6 +2750,7 @@ function useChatMarkdownState({
       resolvedTheme,
       serverConfig,
       skills,
+      taskUsageReport,
       text,
       threadRef,
       updateThreadPullRequestLink,
@@ -3266,9 +3272,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const { resolvedTheme, diffThemeName, isStreaming, onRunShellCommand, taskUsageReport, text } =
+      use(ChatMarkdownRendererContext);
+    // Only the exact fence the timeline selected; any other copy stays code.
+    if (
+      taskUsageReport !== undefined &&
+      node?.position?.start.offset === taskUsageReport.fence.start
+    ) {
+      return <TaskUsageReport target={taskUsageReport} />;
+    }
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;

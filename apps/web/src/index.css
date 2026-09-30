@@ -1987,6 +1987,39 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* Keep all four columns within the chat width, including long numeric cells. */
+.chat-markdown .chat-markdown-task-usage {
+  margin: 0.65rem 0;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.chat-markdown .chat-markdown-task-usage table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.chat-markdown .chat-markdown-task-usage :is(th, td) {
+  padding: 0.4rem 0.25rem;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.chat-markdown .chat-markdown-task-usage :is(th, td):nth-child(-n + 2) {
+  width: 28%;
+}
+
+.chat-markdown .chat-markdown-task-usage :is(th, td):nth-child(3) {
+  width: 24%;
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-markdown .chat-markdown-task-usage :is(th, td):nth-child(4) {
+  width: 20%;
+  font-variant-numeric: tabular-nums;
+}
+
 :root {
   --diff-addition: var(--success);
   --diff-deletion: var(--destructive);

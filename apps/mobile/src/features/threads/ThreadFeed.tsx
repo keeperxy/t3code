@@ -13,9 +13,12 @@ import type {
   EnvironmentId,
   MessageId,
   OrchestrationMessageContext,
+  TaskUsageFence,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import { selectTaskUsageReports } from "@t3tools/client-runtime/state/task-usage";
+import { TaskUsageReport } from "./TaskUsageReport";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
@@ -1366,6 +1369,9 @@ function renderFeedEntry(
     readonly workRowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
     readonly workGroupScrollPositions: Map<string, ThreadWorkGroupScrollPosition>;
     readonly terminalAssistantMessageIds: ReadonlySet<string>;
+    readonly threadId: ThreadId;
+    /** Final replies that render their task's usage table, by message id. */
+    readonly taskUsageFences: ReadonlyMap<string, TaskUsageFence>;
     readonly unsettledTurnId: TurnId | null;
     readonly isWorking: boolean;
     readonly onCopyWorkRow: (rowId: string, value: string) => void;
@@ -1690,6 +1696,17 @@ function renderFeedEntry(
     // intrinsic width before the container is clamped, overlapping the
     // timestamp/copy button row. Pinning the width removes that pass.
     const enterAnimated = isFreshTimestamp(message.createdAt);
+    const taskUsageFence = props.taskUsageFences.get(message.id);
+    const assistantMarkdown = (markdown: string) => (
+      <AssistantMarkdownContent
+        markdown={markdown}
+        markdownStyles={styles}
+        linkHandlers={props.markdownLinkHandlers}
+        onUseArtifactTemplate={props.onUseArtifactTemplate}
+        renderImage={props.renderMarkdownImage}
+        skills={props.skills}
+      />
+    );
     return (
       <Animated.View
         className={cn(showAssistantMeta ? "mb-5 px-1" : "mb-1 px-1", hasWideBlock && "w-full")}
@@ -1697,14 +1714,28 @@ function renderFeedEntry(
       >
         {renderedText.trim().length > 0 ? (
           <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
-            <AssistantMarkdownContent
-              markdown={renderedText}
-              markdownStyles={styles}
-              linkHandlers={props.markdownLinkHandlers}
-              onUseArtifactTemplate={props.onUseArtifactTemplate}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            {taskUsageFence ? (
+              // Split the raw text at the fence the feed selected; each side
+              // renders like any other reply.
+              <>
+                {assistantMarkdown(
+                  renderAssistantCitationsAsText(message.text.slice(0, taskUsageFence.start)),
+                )}
+                <TaskUsageReport
+                  target={{
+                    environmentId: props.environmentId,
+                    threadId: props.threadId,
+                    messageId: message.id,
+                    fence: taskUsageFence,
+                  }}
+                />
+                {assistantMarkdown(
+                  renderAssistantCitationsAsText(message.text.slice(taskUsageFence.end)),
+                )}
+              </>
+            ) : (
+              assistantMarkdown(renderedText)
+            )}
           </MarkdownImageAvailableWidthContext>
         ) : null}
         {attachments.map((attachment) => {
@@ -2507,6 +2538,20 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
     return new Set(terminalIdsByTurn.values());
   }, [props.feed]);
+  const taskUsageFences = useMemo(
+    () =>
+      selectTaskUsageReports({
+        messages: props.feed.flatMap((entry) => (entry.type === "message" ? [entry.message] : [])),
+        terminalAssistantMessageIds,
+        unsettledTurnIds: new Set(unsettledTurnId ? [unsettledTurnId] : []),
+        failedTurnIds: new Set(
+          props.latestTurn && ["error", "interrupted"].includes(props.latestTurn.state)
+            ? [props.latestTurn.turnId]
+            : [],
+        ),
+      }),
+    [props.feed, terminalAssistantMessageIds, unsettledTurnId, props.latestTurn],
+  );
   useEffect(() => {
     const previous = previousLatestTurnRef.current;
     previousLatestTurnRef.current = props.latestTurn;
@@ -2763,6 +2808,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             workRowSizing,
             workGroupScrollPositions,
             terminalAssistantMessageIds,
+            threadId: props.threadId,
+            taskUsageFences,
             unsettledTurnId,
             isWorking: props.activeWorkStartedAt !== null,
             onCopyWorkRow,
@@ -2809,6 +2856,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       workRowSizing,
       workGroupScrollPositions,
       terminalAssistantMessageIds,
+      taskUsageFences,
       unsettledTurnId,
       props.activeWorkStartedAt,
       iconSubtleColor,

@@ -4,6 +4,7 @@ import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
 import { renderCodexDirectivesForCopy } from "@t3tools/client-runtime/codex-markdown-directives";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
+import { selectTaskUsageReports } from "@t3tools/client-runtime/state/task-usage";
 import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
@@ -34,6 +35,7 @@ import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import {
   type MessageId,
   type OrchestrationLatestTurn,
+  type TaskUsageFence,
   type TurnId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
@@ -416,6 +418,8 @@ export type MessagesTimelineRow =
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
+      /** The reference this final reply renders as its task's usage table. */
+      taskUsageFence?: TaskUsageFence | undefined;
     }
   | {
       kind: "assistant-meta";
@@ -1010,6 +1014,18 @@ export function deriveMessagesTimelineRows(input: {
     latestTurn: input.latestTurn ?? null,
     unfoldedTurnIds: activeVisualResponseTurnIds,
   });
+  const taskUsageFences = selectTaskUsageReports({
+    messages: input.timelineEntries.flatMap((entry) =>
+      entry.kind === "message" ? [entry.message] : [],
+    ),
+    terminalAssistantMessageIds,
+    unsettledTurnIds: activeVisualResponseTurnIds,
+    failedTurnIds: new Set(
+      input.latestTurn && ["error", "interrupted"].includes(input.latestTurn.state)
+        ? [input.latestTurn.turnId]
+        : [],
+    ),
+  });
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorEntryId.values()) {
     if (!input.expandedTurnIds?.has(fold.turnId)) {
@@ -1408,6 +1424,7 @@ export function deriveMessagesTimelineRows(input: {
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
+      taskUsageFence: taskUsageFences.get(timelineEntry.message.id),
     });
   }
 
@@ -1689,7 +1706,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
-        a.revertTurnCount === bm.revertTurnCount
+        a.revertTurnCount === bm.revertTurnCount &&
+        a.taskUsageFence?.taskId === bm.taskUsageFence?.taskId &&
+        a.taskUsageFence?.start === bm.taskUsageFence?.start
       );
     }
   }

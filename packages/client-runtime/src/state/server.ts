@@ -6,6 +6,7 @@ import {
   type ServerLifecycleStreamReadyEvent,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
+  type TaskUsageReadReportInput,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -47,6 +48,7 @@ import {
 } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
+import { watchTaskUsageReport } from "./taskUsage.ts";
 import {
   applyServerConfigProjection,
   type ServerConfigProjection,
@@ -1081,6 +1083,12 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
+    }),
+    // Dispose pending polling as soon as the last subscriber unmounts.
+    taskUsageReport: createEnvironmentSubscriptionAtomFamily(runtime, {
+      label: "environment-data:task-usage:report",
+      subscribe: (input: TaskUsageReadReportInput) => watchTaskUsageReport(input),
+      idleTtlMs: 0,
     }),
     configProjection,
     welcome,

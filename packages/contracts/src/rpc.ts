@@ -262,6 +262,7 @@ import {
   ProviderConsumeResetCreditResult,
 } from "./providerUsageLimits.ts";
 import { UsagePricing, UsageReadError, UsageSummary, UsageSummaryInput } from "./usage.ts";
+import { TaskUsageReadReportInput, TaskUsageReadReportResult } from "./taskUsage.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import {
   ProjectCloneActionInput,
@@ -398,6 +399,7 @@ export const WS_METHODS = {
   serverGetBackgroundPolicy: "server.getBackgroundPolicy",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+  taskUsageReadReport: "taskUsage.readReport",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -688,6 +690,17 @@ const WsServerGetUsageSummaryRpc = Rpc.make(WS_METHODS.serverGetUsageSummary, {
 const WsServerRefreshUsageRatesRpc = Rpc.make(WS_METHODS.serverRefreshUsageRates, {
   payload: Schema.Struct({}),
   success: UsagePricing,
+  error: EnvironmentAuthorizationError,
+});
+
+/**
+ * Reads a multi-model task's usage table for the assistant message that
+ * references it. Stateless: clients poll while it answers `pending`. Only sent
+ * to servers that advertise `ServerConfig.taskUsageReports`.
+ */
+const WsTaskUsageReadReportRpc = Rpc.make(WS_METHODS.taskUsageReadReport, {
+  payload: TaskUsageReadReportInput,
+  success: TaskUsageReadReportResult,
   error: EnvironmentAuthorizationError,
 });
 
@@ -1463,6 +1476,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerRetryResourceTelemetryRpc,
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
+  WsTaskUsageReadReportRpc,
   WsServerSignalProcessRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,

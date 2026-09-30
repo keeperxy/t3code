@@ -2381,6 +2381,20 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
 function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+  const threadRef = ctx.threadRef;
+  const taskUsageFence = row.taskUsageFence;
+  const taskUsageReport = useMemo(
+    () =>
+      threadRef && taskUsageFence
+        ? {
+            environmentId: threadRef.environmentId,
+            threadId: threadRef.threadId,
+            messageId: row.message.id,
+            fence: taskUsageFence,
+          }
+        : undefined,
+    [threadRef, taskUsageFence, row.message.id],
+  );
 
   return (
     <>
@@ -2404,6 +2418,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onRunShellCommand={ctx.onRunShellCommand}
             onImageExpand={ctx.onImageExpand}
+            taskUsageReport={taskUsageReport}
           />
         </AssistantCitationSource>
         <AssistantChangedFilesSection

@@ -193,6 +193,7 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as TaskUsageReports from "./taskUsage/TaskUsageReports.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Data from "effect/Data";
 
@@ -1082,7 +1083,14 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
-      Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.merge(
+          UsageService.layerTest,
+          Layer.mock(TaskUsageReports.TaskUsageReports)({
+            readReport: () => Effect.succeed({ status: "pending" }),
+          }),
+        ),
+      ),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
           record: () => Effect.void,
@@ -5331,6 +5339,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);
       assert.equal(response.threadResumeCompletionMarker, true);
+      assert.equal(response.taskUsageReports, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("task usage RPC requires orchestration read permission", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const input = {
+        threadId: ThreadId.make("usage-thread"),
+        messageId: MessageId.make("usage-message"),
+        taskId: "usage-task",
+      };
+      for (const scope of ["orchestration:read", "access:read"] as const) {
+        const token = yield* exchangeAccessToken(defaultDesktopBootstrapToken, { scope });
+        assert.equal(token.response.status, 200);
+        const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", {
+          headers: { authorization: `Bearer ${token.body.access_token ?? ""}` },
+        });
+        const { ticket } = yield* responseJsonEffect<{ readonly ticket: string }>(ticketResponse);
+        const wsUrl = `${yield* getWsServerUrl("/ws", { authenticated: false })}?wsTicket=${encodeURIComponent(ticket)}`;
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.taskUsageReadReport](input).pipe(Effect.result),
+          ),
+        );
+        if (scope === "orchestration:read") {
+          if (result._tag !== "Success") throw new Error("Expected an authorized task usage read");
+          assert.deepEqual(result.success, { status: "pending" });
+        } else {
+          if (result._tag !== "Failure")
+            throw new Error("Expected an unauthorized task usage read");
+          assert.equal(result.failure._tag, "EnvironmentAuthorizationError");
+          if (result.failure._tag === "EnvironmentAuthorizationError") {
+            assert.equal(result.failure.requiredScope, "orchestration:read");
+          }
+        }
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
